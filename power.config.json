@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "appId": "c28a1c92-dccd-4e98-ae5b-4a1240e63482",
+  "appDisplayName": "Coach-Portal-CodeAPP",
+  "region": "prod",
+  "environmentId": "79bc9a05-e24f-e624-a029-e2725aa5864f",
+  "description": " ",
+  "buildPath": "./dist",
+  "buildEntryPoint": "index.html",
+  "localAppUrl": "http://localhost:3000",
+  "logoPath": "Default",
+  "connectionReferences": {},
+  "databaseReferences": {
+    "default.cds": {
+      "dataSources": {
+        "players": {
+          "entitySetName": "cr9be_players",
+          "logicalName": "cr9be_player",
+          "isHidden": false
+        },
+        "events": {
+          "entitySetName": "axm365_events",
+          "logicalName": "axm365_event",
+          "isHidden": false
+        },
+        "eventattendances": {
+          "entitySetName": "axm365_eventattendances",
+          "logicalName": "axm365_eventattendance",
+          "isHidden": false
+        },
+        "invoices": {
+          "entitySetName": "invoices",
+          "logicalName": "invoice",
+          "isHidden": false
+        }
+      },
+      "environmentVariableName": ""
+    }
+  }
+}
