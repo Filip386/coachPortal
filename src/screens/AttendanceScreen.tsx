@@ -1,5 +1,7 @@
 /* eslint-disable */
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { usePortalTarget } from "../context/PhoneFrameContext";
 import { ChevronLeft, Check, X, Clock, RefreshCw, Star, ChevronDown, Search } from "lucide-react";
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
@@ -17,6 +19,7 @@ interface AttendanceScreenProps {
 }
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
+  const portalTarget = usePortalTarget();
   const { players, events, attendances, loading, error, refreshAttendances } = useData();
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
@@ -225,78 +228,81 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         </div>
       )}
 
-      {showEventPicker && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" }}
-          onClick={() => { setShowEventPicker(false); setEventSearch(""); }}
-        >
+      {showEventPicker && (() => {
+        const modal = (
           <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "72vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+            style={{ position: portalTarget ? "absolute" : "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" }}
+            onClick={() => { setShowEventPicker(false); setEventSearch(""); }}
           >
-            <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center" }}>
-              <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
-            </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "72vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center" }}>
+                <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
+              </div>
 
-            <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
-              <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy, marginBottom: 10 }}>Choose Event</div>
-              <div style={{ position: "relative" }}>
-                <Search size={14} color={COLORS.mute} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
-                <input
-                  autoFocus
-                  value={eventSearch}
-                  onChange={(e) => setEventSearch(e.target.value)}
-                  placeholder="Search events…"
-                  style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 12, border: `1px solid ${COLORS.line}`, fontFamily: fontStack, fontSize: 13.5, color: COLORS.navy, outline: "none", boxSizing: "border-box", background: COLORS.cream }}
-                />
+              <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
+                <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy, marginBottom: 10 }}>Choose Event</div>
+                <div style={{ position: "relative" }}>
+                  <Search size={14} color={COLORS.mute} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                  <input
+                    autoFocus
+                    value={eventSearch}
+                    onChange={(e) => setEventSearch(e.target.value)}
+                    placeholder="Search events…"
+                    style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 12, border: `1px solid ${COLORS.line}`, fontFamily: fontStack, fontSize: 13.5, color: COLORS.navy, outline: "none", boxSizing: "border-box", background: COLORS.cream }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
+                {events.filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase())).length === 0 && (
+                  <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO EVENTS FOUND</div>
+                )}
+                {events
+                  .filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase()))
+                  .map((e) => {
+                    const isActive = e.axm365_eventid === selectedEventId;
+                    const evDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
+                    return (
+                      <button
+                        key={e.axm365_eventid}
+                        onClick={() => { setSelectedEventId(e.axm365_eventid); setShowEventPicker(false); setEventSearch(""); }}
+                        style={{ background: isActive ? COLORS.navy : "#fff", border: `1px solid ${isActive ? COLORS.navy : COLORS.line}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}
+                      >
+                        <div style={{ width: 42, height: 42, borderRadius: 10, background: isActive ? COLORS.yellow : COLORS.cream, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          {evDate ? (
+                            <>
+                              <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: COLORS.navy, lineHeight: 1 }}>{evDate.getDate()}</span>
+                              <span style={{ fontFamily: monoStack, fontSize: 8, color: COLORS.mute, letterSpacing: "0.1em", lineHeight: 1, marginTop: 2 }}>{evDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()}</span>
+                            </>
+                          ) : (
+                            <span style={{ fontFamily: monoStack, fontSize: 9, color: COLORS.mute }}>--</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, color: isActive ? "#fff" : COLORS.navy, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {e.axm365_name || "Unnamed Event"}
+                          </div>
+                          {evDate && (
+                            <div style={{ fontSize: 10.5, color: isActive ? "rgba(255,255,255,0.6)" : COLORS.mute, fontFamily: monoStack, letterSpacing: "0.08em", marginTop: 2 }}>
+                              {evDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase()}
+                              {" · "}
+                              {evDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </div>
+                        {isActive && <Check size={16} color={COLORS.yellow} strokeWidth={2.5} style={{ flexShrink: 0 }} />}
+                      </button>
+                    );
+                  })}
               </div>
             </div>
-
-            <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {events.filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase())).length === 0 && (
-                <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO EVENTS FOUND</div>
-              )}
-              {events
-                .filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase()))
-                .map((e) => {
-                  const isActive = e.axm365_eventid === selectedEventId;
-                  const evDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
-                  return (
-                    <button
-                      key={e.axm365_eventid}
-                      onClick={() => { setSelectedEventId(e.axm365_eventid); setShowEventPicker(false); setEventSearch(""); }}
-                      style={{ background: isActive ? COLORS.navy : "#fff", border: `1px solid ${isActive ? COLORS.navy : COLORS.line}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}
-                    >
-                      <div style={{ width: 42, height: 42, borderRadius: 10, background: isActive ? COLORS.yellow : COLORS.cream, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {evDate ? (
-                          <>
-                            <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: COLORS.navy, lineHeight: 1 }}>{evDate.getDate()}</span>
-                            <span style={{ fontFamily: monoStack, fontSize: 8, color: COLORS.mute, letterSpacing: "0.1em", lineHeight: 1, marginTop: 2 }}>{evDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()}</span>
-                          </>
-                        ) : (
-                          <span style={{ fontFamily: monoStack, fontSize: 9, color: COLORS.mute }}>--</span>
-                        )}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, color: isActive ? "#fff" : COLORS.navy, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {e.axm365_name || "Unnamed Event"}
-                        </div>
-                        {evDate && (
-                          <div style={{ fontSize: 10.5, color: isActive ? "rgba(255,255,255,0.6)" : COLORS.mute, fontFamily: monoStack, letterSpacing: "0.08em", marginTop: 2 }}>
-                            {evDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase()}
-                            {" · "}
-                            {evDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                          </div>
-                        )}
-                      </div>
-                      {isActive && <Check size={16} color={COLORS.yellow} strokeWidth={2.5} style={{ flexShrink: 0 }} />}
-                    </button>
-                  );
-                })}
-            </div>
           </div>
-        </div>
-      )}
+        );
+        return portalTarget ? createPortal(modal, portalTarget) : modal;
+      })()}
     </>
   );
 };

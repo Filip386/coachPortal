@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { PhoneFrameContext } from "./context/PhoneFrameContext";
 import { DataProvider } from "./context/DataContext";
 import { BottomNav } from "./components/shared";
 import {
@@ -28,6 +29,7 @@ const App: React.FC = () => {
   const [activeNav, setActiveNav] = useState<ScreenId>("home");
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [frameEl, setFrameEl] = useState<HTMLElement | null>(null);
   const isMobile = useIsMobile();
 
   const go = (id: ScreenId, playerId?: string, eventId?: string) => {
@@ -115,6 +117,7 @@ const App: React.FC = () => {
 
       {/* Phone frame */}
       <div
+        ref={setFrameEl}
         style={{
           width: 390,
           height: "min(844px, calc(100vh - 64px))",
@@ -163,10 +166,12 @@ const App: React.FC = () => {
         <div style={{ position: "absolute", right: -3, top: 154, width: 3, height: 88, background: "#08111f", borderRadius: "0 3px 3px 0" }} />
 
         {/* Screen content */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {renderScreen()}
-        </div>
-        <BottomNav active={activeNav} onChange={go} />
+        <PhoneFrameContext.Provider value={frameEl}>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {renderScreen()}
+          </div>
+          <BottomNav active={activeNav} onChange={go} />
+        </PhoneFrameContext.Provider>
       </div>
     </div>
   );

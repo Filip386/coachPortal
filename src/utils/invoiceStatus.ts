@@ -1,3 +1,4 @@
+/* eslint-disable */
 import type { Invoices } from "../generated/models/InvoicesModel";
 
 export type InvoiceStatus = "Overdue" | "Due Soon" | "Paid";
