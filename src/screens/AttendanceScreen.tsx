@@ -1,82 +1,54 @@
 /* eslint-disable */
-import React, { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, Check, X, Clock, RefreshCw, Star } from "lucide-react";
-import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
-import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
+import React, { useState, useEffect } from "react";
+import { ChevronLeft, Check, X, Clock, RefreshCw, Star, ChevronDown, Search } from "lucide-react";
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
-import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
-import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
-import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
-import { COLORS, displayStack, monoStack } from "../constants/design";
-import { unwrap } from "../utils/dataverse";
+import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, LoadingSpinner, ErrorBanner } from "../components/shared";
 import { Tally, MarkBtn, SuccessBanner } from "../components/ui";
+import { useData } from "../context/DataContext";
+import { lookupName } from "../utils/dataverse";
 
 type AttendanceMark = "present" | "late" | "absent";
 
 interface AttendanceScreenProps {
   go: (id: ScreenId) => void;
+  initialEventId?: string | null;
 }
 
-export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
-  const [players, setPlayers] = useState<Cr9be_players[]>([]);
-  const [events, setEvents] = useState<Axm365_events[]>([]);
-  const [attendances, setAttendances] = useState<Axm365_eventattendances[]>([]);
-  const [loading, setLoading] = useState(true);
+export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
+  const { players, events, attendances, loading, error, refreshAttendances } = useData();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(initialEventId ?? null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showEventPicker, setShowEventPicker] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [pRes, eRes, aRes] = await Promise.all([
-        Cr9be_playersService.getAll(),
-        Axm365_eventsService.getAll(),
-        Axm365_eventattendancesService.getAll({ top: 100 }),
-      ]);
-      const pList = unwrap<Cr9be_players>(pRes);
-      const eList = unwrap<Axm365_events>(eRes);
-      const aList = unwrap<Axm365_eventattendances>(aRes);
-      setPlayers(pList);
-      setEvents(eList);
-      setAttendances(aList);
-      const firstEventId = eList[0] ? eList[0].axm365_eventid : null;
-      setSelectedEventId(firstEventId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load attendance data");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
+  // Set default event once events are available (only if no event was passed in)
   useEffect(() => {
-    if (!selectedEventId || players.length === 0) return;
-    const initialMarks: Record<string, AttendanceMark> = {};
-    players.forEach((p) => {
-      const playerId = p.cr9be_playerid;
-      const existing = attendances.find((a) => {
-        return (
-          (a as any)._axm365_player_value === playerId &&
-          (a as any)._axm365_event_value === selectedEventId
-        );
-      });
-      if (existing) {
-        const name: string = (existing.axm365_name ?? "").toLowerCase();
-        if (name.startsWith("late")) initialMarks[playerId] = "late";
-        else if (name.startsWith("absent")) initialMarks[playerId] = "absent";
-        else if (name.startsWith("present")) initialMarks[playerId] = "present";
-        else initialMarks[playerId] = (existing as any).axm365_attended === false ? "absent" : "present";
+    if (events.length > 0 && !selectedEventId && !initialEventId) {
+      setSelectedEventId(events[0].axm365_eventid);
+    }
+  }, [events]);
+
+  // Load saved attendance for the selected event (or clear if none)
+  useEffect(() => {
+    if (!selectedEventId) { setMarks({}); return; }
+    const eventRecords = attendances.filter(
+      (a) => (a as any)._axm365_event_value === selectedEventId
+    );
+    if (eventRecords.length === 0) { setMarks({}); return; }
+    const loaded: Record<string, AttendanceMark> = {};
+    for (const record of eventRecords) {
+      const playerId = (record as any)._axm365_player_value;
+      if (playerId) {
+        loaded[playerId] = record.axm365_attended ? "present" : "absent";
       }
-    });
-    setMarks(initialMarks);
-  }, [selectedEventId, players, attendances]);
+    }
+    setMarks(loaded);
+  }, [selectedEventId, attendances]);
 
   const setMark = (id: string, v: AttendanceMark) => setMarks((m) => ({ ...m, [id]: v }));
 
@@ -93,10 +65,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
   const saveAttendance = async () => {
     if (!selectedEventId) return;
     setSaveSuccess(false);
-    setError(null);
+    setWriteError(null);
     const markedPlayers = players.filter((p) => !!marks[p.cr9be_playerid]);
     if (markedPlayers.length === 0) {
-      setError("Please mark at least one player before saving.");
+      setWriteError("Please mark at least one player before saving.");
       return;
     }
     try {
@@ -104,7 +76,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
       for (const p of markedPlayers) {
         const playerId = p.cr9be_playerid;
         const mark = marks[playerId];
-        const label = mark === "present" ? "Present" : mark === "late" ? "Late" : "Absent";
         const attended = mark !== "absent";
         const existing = attendances.find((a) =>
           (a as any)._axm365_player_value === playerId &&
@@ -113,12 +84,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
         if (existing) {
           const res = await Axm365_eventattendancesService.update(
             existing.axm365_eventattendanceid,
-            { axm365_name: `${label} - ${p.cr9be_name}`, axm365_attended: attended } as any
+            { axm365_name: p.cr9be_name, axm365_attended: attended } as any
           );
           throwIfError(res, `Update ${p.cr9be_name}`);
         } else {
           const res = await Axm365_eventattendancesService.create({
-            axm365_name: `${label} - ${p.cr9be_name}`,
+            axm365_name: p.cr9be_name,
             "axm365_Player@odata.bind": `/cr9be_players(${playerId})`,
             "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
             axm365_attended: attended,
@@ -126,10 +97,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
           throwIfError(res, `Create ${p.cr9be_name}`);
         }
       }
+      await refreshAttendances();
       setSaveSuccess(true);
       setTimeout(() => { go("home"); }, 1800);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save attendance");
+      setWriteError(err instanceof Error ? err.message : "Failed to save attendance");
     } finally {
       setSaving(false);
     }
@@ -151,17 +123,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
               <ChevronLeft size={18} color="#fff" strokeWidth={2} />
             </button>
             {events.length > 0 && (
-              <select
-                value={selectedEventId ?? ""}
-                onChange={(ev) => setSelectedEventId(ev.target.value)}
-                style={{ background: "rgba(255,255,255,0.1)", border: `1px solid rgba(255,255,255,0.2)`, borderRadius: 10, color: COLORS.yellow, fontFamily: monoStack, fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", padding: "6px 10px", cursor: "pointer", maxWidth: 170 }}
+              <button
+                onClick={() => setShowEventPicker(true)}
+                style={{ background: "rgba(255,255,255,0.1)", border: `1px solid rgba(255,255,255,0.2)`, borderRadius: 10, color: COLORS.yellow, fontFamily: monoStack, fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", padding: "6px 10px", cursor: "pointer", maxWidth: 180, display: "flex", alignItems: "center", gap: 6 }}
               >
-                {events.map((e) => (
-                  <option key={e.axm365_eventid} value={e.axm365_eventid} style={{ color: COLORS.navy }}>
-                    {e.axm365_name}
-                  </option>
-                ))}
-              </select>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{eventName}</span>
+                <ChevronDown size={12} color={COLORS.yellow} strokeWidth={2.5} style={{ flexShrink: 0 }} />
+              </button>
             )}
           </div>
 
@@ -195,18 +163,19 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
         </div>
       </div>
 
-      {loading && <LoadingSpinner label="Loading players…" />}
-      {error && <ErrorBanner message={error} onRetry={load} />}
+      {loading && players.length === 0 && <LoadingSpinner label="Loading players…" />}
+      {error && players.length === 0 && <ErrorBanner message={error} onRetry={() => refreshAttendances().catch(() => {})} />}
+      {writeError && <ErrorBanner message={writeError} onRetry={saveAttendance} />}
       {saveSuccess && <SuccessBanner message="Attendance saved successfully!" />}
 
-      {!loading && players.length > 0 && (
+      {(!loading || players.length > 0) && players.length > 0 && (
         <div style={{ padding: "18px 16px 20px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {players.map((p) => {
               const playerId = p.cr9be_playerid;
               const name = p.cr9be_name || "Unknown Player";
-              const num = (p as any).cr9be_number ?? "?";
-              const pos = (p as any).cr9be_positionname ?? "---";
+              const num = p.cr9be_number ?? "?";
+              const pos = lookupName(p, "cr9be_position");
               const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
               const savedDraft = localStorage.getItem(`perf_draft_${playerId}`);
               const perfRating: number = savedDraft ? (JSON.parse(savedDraft).rating ?? 4) : 4;
@@ -220,7 +189,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 13.5 }}>{name}</div>
-                    <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em" }}>{pos} · #{num}</div>
+                    <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em", marginTop: 2 }}>
+                      {pos ? `${pos} · ` : ""}#{num}
+                    </div>
                     <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
                       {[1, 2, 3, 4, 5].map((n) => (
                         <Star key={n} size={11} color={n <= perfRating ? COLORS.yellow : COLORS.line} fill={n <= perfRating ? COLORS.yellow : "none"} strokeWidth={1.5} />
@@ -251,6 +222,79 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go }) => {
       {!loading && players.length === 0 && (
         <div style={{ padding: 40, textAlign: "center", color: COLORS.mute }}>
           No players found. Please add players to your squad first.
+        </div>
+      )}
+
+      {showEventPicker && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end" }}
+          onClick={() => { setShowEventPicker(false); setEventSearch(""); }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "72vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+          >
+            <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center" }}>
+              <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
+            </div>
+
+            <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
+              <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy, marginBottom: 10 }}>Choose Event</div>
+              <div style={{ position: "relative" }}>
+                <Search size={14} color={COLORS.mute} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                <input
+                  autoFocus
+                  value={eventSearch}
+                  onChange={(e) => setEventSearch(e.target.value)}
+                  placeholder="Search events…"
+                  style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 12, border: `1px solid ${COLORS.line}`, fontFamily: fontStack, fontSize: 13.5, color: COLORS.navy, outline: "none", boxSizing: "border-box", background: COLORS.cream }}
+                />
+              </div>
+            </div>
+
+            <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {events.filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase())).length === 0 && (
+                <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO EVENTS FOUND</div>
+              )}
+              {events
+                .filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase()))
+                .map((e) => {
+                  const isActive = e.axm365_eventid === selectedEventId;
+                  const evDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
+                  return (
+                    <button
+                      key={e.axm365_eventid}
+                      onClick={() => { setSelectedEventId(e.axm365_eventid); setShowEventPicker(false); setEventSearch(""); }}
+                      style={{ background: isActive ? COLORS.navy : "#fff", border: `1px solid ${isActive ? COLORS.navy : COLORS.line}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}
+                    >
+                      <div style={{ width: 42, height: 42, borderRadius: 10, background: isActive ? COLORS.yellow : COLORS.cream, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {evDate ? (
+                          <>
+                            <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: COLORS.navy, lineHeight: 1 }}>{evDate.getDate()}</span>
+                            <span style={{ fontFamily: monoStack, fontSize: 8, color: COLORS.mute, letterSpacing: "0.1em", lineHeight: 1, marginTop: 2 }}>{evDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()}</span>
+                          </>
+                        ) : (
+                          <span style={{ fontFamily: monoStack, fontSize: 9, color: COLORS.mute }}>--</span>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: isActive ? "#fff" : COLORS.navy, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {e.axm365_name || "Unnamed Event"}
+                        </div>
+                        {evDate && (
+                          <div style={{ fontSize: 10.5, color: isActive ? "rgba(255,255,255,0.6)" : COLORS.mute, fontFamily: monoStack, letterSpacing: "0.08em", marginTop: 2 }}>
+                            {evDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).toUpperCase()}
+                            {" · "}
+                            {evDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        )}
+                      </div>
+                      {isActive && <Check size={16} color={COLORS.yellow} strokeWidth={2.5} style={{ flexShrink: 0 }} />}
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
         </div>
       )}
     </>

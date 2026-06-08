@@ -20,7 +20,7 @@ export const BottomNav: React.FC<{ active: ScreenId; onChange: (id: ScreenId) =>
         background: "rgba(251,247,238,0.92)",
         backdropFilter: "blur(12px)",
         borderTop: `1px solid ${COLORS.line}`,
-        padding: "10px 12px 18px",
+        padding: "10px 12px max(18px, env(safe-area-inset-bottom))",
         display: "flex",
         justifyContent: "space-around",
         zIndex: 40,

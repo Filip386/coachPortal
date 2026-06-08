@@ -1,46 +1,31 @@
-/* eslint-disable */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { Star } from "lucide-react";
-import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
-import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
-import { unwrap } from "../utils/dataverse";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner } from "../components/shared";
 import { AttributeBar, Chip, SuccessBanner } from "../components/ui";
-
-interface PerformanceScreenProps {
-  go: (id: ScreenId) => void;
-}
+import { useData } from "../context/DataContext";
+import { lookupName } from "../utils/dataverse";
 
 const DRAFT_KEY = (id: string) => `perf_draft_${id}`;
 
-export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
-  const [players, setPlayers] = useState<Cr9be_players[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+interface PerformanceScreenProps {
+  go: (id: ScreenId, playerId?: string) => void;
+  selectedPlayerId?: string | null;
+}
+
+export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, selectedPlayerId }) => {
+  const { players, loading, error, refreshPlayers } = useData();
+  const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [rating, setRating] = useState(4);
   const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await Cr9be_playersService.getAll({ top: 100 });
-      const list = unwrap<Cr9be_players>(res);
-      setPlayers(list);
-      if (list[0]) setSelectedId(list[0].cr9be_playerid);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load players");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  // Once players load, fall back to first player if none selected
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!selectedId && players.length > 0) setSelectedId(players[0].cr9be_playerid);
+  }, [players, selectedId]);
 
   // Load saved draft whenever selected player changes
   useEffect(() => {
@@ -48,6 +33,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
     const saved = localStorage.getItem(DRAFT_KEY(selectedId));
     if (saved) {
       const { rating: r, notes: n } = JSON.parse(saved);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRating(r ?? 4);
       setNotes(n ?? "");
     } else {
@@ -58,8 +44,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
 
   const player = players.find((p) => p.cr9be_playerid === selectedId);
   const playerName = player ? (player.cr9be_name || "Player") : "Player";
-  const playerPos = player ? ((player as any).cr9be_positionname || "---") : "---";
-  const playerNum = player ? ((player as any).cr9be_number ?? "?") : "?";
+  const playerPos = lookupName(player, "cr9be_position");
+  const playerNum = player ? (player.cr9be_number ?? "?") : "?";
 
   const saveDraft = () => {
     if (!selectedId) return;
@@ -68,21 +54,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
     setTimeout(() => setSaveSuccess(false), 3000);
   };
 
-  const savePerformance = async () => {
+  const savePerformance = () => {
     if (!selectedId) return;
     setSaveSuccess(false);
-    try {
-      setSaving(true);
-      setError(null);
-      localStorage.setItem(DRAFT_KEY(selectedId), JSON.stringify({ rating, notes }));
-      await Cr9be_playersService.update(selectedId, { cr9be_notes: `Rating: ${rating}/5 - ${notes}` } as any);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save performance data");
-    } finally {
-      setSaving(false);
-    }
+    localStorage.setItem(DRAFT_KEY(selectedId), JSON.stringify({ rating, notes }));
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
   };
 
   return (
@@ -90,11 +67,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
       <StatusBar />
       <ScreenHeader kicker="Tactical Training" title="Performance Notes" onBack={() => go("home")} />
 
-      {loading && <LoadingSpinner label="Loading players…" />}
-      {error && <ErrorBanner message={error} onRetry={load} />}
+      {loading && players.length === 0 && <LoadingSpinner label="Loading players…" />}
+      {error && players.length === 0 && <ErrorBanner message={error} onRetry={() => refreshPlayers().catch(() => {})} />}
       {saveSuccess && <SuccessBanner message="Performance saved successfully!" />}
 
-      {!loading && players.length > 0 && (
+      {(!loading || players.length > 0) && players.length > 0 && (
         <>
           <div style={{ padding: "0 22px 12px" }}>
             <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.2em", color: COLORS.mute, marginBottom: 8, fontWeight: 600, textTransform: "uppercase" }}>
@@ -132,7 +109,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
                   </div>
                   <div>
                     <div style={{ fontFamily: displayStack, fontSize: 19, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>{playerName}</div>
-                    <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em", marginTop: 2 }}>{playerPos} · #{playerNum}</div>
+                    <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em", marginTop: 2 }}>{playerPos ? `${playerPos} · ` : ""}#{playerNum}</div>
                   </div>
                 </div>
 
@@ -180,11 +157,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go }) => {
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-              <button onClick={saveDraft} disabled={saving} style={{ flex: 1, padding: "13px 0", background: "#fff", color: COLORS.navy, border: `1px solid ${COLORS.line}`, borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
+              <button onClick={saveDraft} style={{ flex: 1, padding: "13px 0", background: "#fff", color: COLORS.navy, border: `1px solid ${COLORS.line}`, borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 Save Draft
               </button>
-              <button onClick={savePerformance} disabled={saving} style={{ flex: 1.4, padding: "13px 0", background: saving ? COLORS.mute : COLORS.navy, color: "#fff", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}>
-                {saving ? "Saving..." : "Submit Review"}
+              <button onClick={savePerformance} style={{ flex: 1.4, padding: "13px 0", background: COLORS.navy, color: "#fff", border: 0, borderRadius: 14, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Submit Review
               </button>
             </div>
           </div>

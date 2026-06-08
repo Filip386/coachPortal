@@ -1,66 +1,34 @@
 /* eslint-disable */
-import React, { useState, useEffect, useCallback } from "react";
+import React from "react";
 import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight } from "lucide-react";
-import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
-import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
-import { InvoicesService } from "../generated/services/InvoicesService";
-import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
-import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
-import type { Invoices } from "../generated/models/InvoicesModel";
 import { COLORS, displayStack, monoStack } from "../constants/design";
-import { unwrap } from "../utils/dataverse";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, SectionTitle, ActionTile, ErrorBanner } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
+import { useData } from "../context/DataContext";
+import { getInvoiceStatus } from "../utils/invoiceStatus";
 
 interface HomeScreenProps {
   go: (id: ScreenId) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const [players, setPlayers] = useState<Cr9be_players[]>([]);
-  const [events, setEvents] = useState<Axm365_events[]>([]);
-  const [invoices, setInvoices] = useState<Invoices[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [todayEvent, setTodayEvent] = useState<Axm365_events | null>(null);
+  const { coachName, players, events, invoices, loading, error, refreshAll } = useData();
+  const firstName = coachName ? coachName.split(" ")[0] : null;
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [pRes, eRes, iRes] = await Promise.all([
-        Cr9be_playersService.getAll({ top: 100 }),
-        Axm365_eventsService.getAll({ top: 50 }),
-        InvoicesService.getAll({ top: 100 }),
-      ]);
-      const pList = unwrap<Cr9be_players>(pRes);
-      const eList = unwrap<Axm365_events>(eRes);
-      const iList = unwrap<Invoices>(iRes);
-      setPlayers(pList);
-      setEvents(eList);
-      setInvoices(iList);
-      const today = new Date();
-      const todayEv = eList.find((e) => {
-        const d = e.axm365_eventdate;
-        if (!d) return false;
-        return new Date(d).toDateString() === today.toDateString();
-      });
-      setTodayEvent(todayEv || null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
+  const todayEvent = events.find((e) => {
+    const d = e.axm365_eventdate;
+    if (!d) return false;
+    return new Date(d).toDateString() === new Date().toDateString();
+  }) ?? null;
 
   const squadCount = players.length;
-  const overdueInvoices = invoices.filter(
-    (inv) => (inv as any).axm365_paymentstatus === "overdue" || (inv as any).cr9be_status === "overdue"
-  );
-  const upcoming = events.slice(0, 3);
+  const overdueInvoices = invoices.filter((inv) => getInvoiceStatus(inv) === "Overdue");
+  const now = new Date();
+  const upcoming = events
+    .filter((e) => e.axm365_eventdate && new Date(e.axm365_eventdate) >= now)
+    .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime())
+    .slice(0, 3);
 
   return (
     <>
@@ -105,7 +73,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
           </div>
           <h1 style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 34, lineHeight: 1.0, margin: 0, letterSpacing: "-0.025em" }}>
             Buenos días,<br />
-            <span style={{ color: COLORS.yellow }}>Coach.</span>
+            <span style={{ color: COLORS.yellow }}>{firstName ? `${firstName}.` : "Coach."}</span>
           </h1>
           {loading ? (
             <div style={{ marginTop: 16, opacity: 0.6, fontFamily: monoStack, fontSize: 11 }}>Loading stats…</div>
@@ -121,7 +89,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         </div>
       </div>
 
-      {error && <ErrorBanner message={error} onRetry={load} />}
+      {error && <ErrorBanner message={error} onRetry={refreshAll} />}
 
       {!loading && (
         <div style={{ padding: "0 18px", marginTop: 16 }}>

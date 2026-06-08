@@ -1,81 +1,41 @@
 /* eslint-disable */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState } from "react";
 import { Phone, Mail, RefreshCw } from "lucide-react";
-import { InvoicesService } from "../generated/services/InvoicesService";
-import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
-import type { Invoices } from "../generated/models/InvoicesModel";
-import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
-import { unwrap } from "../utils/dataverse";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner } from "../components/shared";
 import { PillStat } from "../components/ui";
+import { useData } from "../context/DataContext";
+import { getInvoiceStatus } from "../utils/invoiceStatus";
+import type { InvoiceStatus } from "../utils/invoiceStatus";
 
-type InvoiceTab = "Overdue" | "Due Soon" | "Paid";
+type InvoiceTab = InvoiceStatus;
 
 interface InvoicesScreenProps {
   go: (id: ScreenId) => void;
 }
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
-  const [invoices, setInvoices] = useState<Invoices[]>([]);
-  const [players, setPlayers] = useState<Cr9be_players[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { invoices, loading, error, refreshInvoices } = useData();
   const [tab, setTab] = useState<InvoiceTab>("Overdue");
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [iRes, pRes] = await Promise.all([
-        InvoicesService.getAll({ top: 100 }),
-        Cr9be_playersService.getAll({ top: 100 }),
-      ]);
-      setInvoices(unwrap<Invoices>(iRes));
-      setPlayers(unwrap<Cr9be_players>(pRes));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load invoices");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
   const refreshData = async () => {
     setRefreshing(true);
-    await load();
+    await refreshInvoices().catch(() => {});
     setRefreshing(false);
   };
 
-  const getStatus = (inv: Invoices): InvoiceTab => {
-    const s = (inv as any).axm365_paymentstatus ?? (inv as any).cr9be_status ?? (inv as any).axm365_status;
-    if (s === "overdue" || s === 3) return "Overdue";
-    if (s === "due" || s === "pending" || s === 2) return "Due Soon";
-    return "Paid";
-  };
-
-  const filtered = invoices.filter((inv) => getStatus(inv) === tab);
-  const overdueCount = invoices.filter((i) => getStatus(i) === "Overdue").length;
-  const dueSoonCount = invoices.filter((i) => getStatus(i) === "Due Soon").length;
-  const paidCount = invoices.filter((i) => getStatus(i) === "Paid").length;
+  const filtered = invoices.filter((inv) => getInvoiceStatus(inv) === tab);
+  const overdueCount = invoices.filter((i) => getInvoiceStatus(i) === "Overdue").length;
+  const dueSoonCount = invoices.filter((i) => getInvoiceStatus(i) === "Due Soon").length;
+  const paidCount = invoices.filter((i) => getInvoiceStatus(i) === "Paid").length;
   const totalOutstanding = invoices
-    .filter((i) => getStatus(i) !== "Paid")
-    .reduce((sum, i) => sum + ((i as any).axm365_amount ?? (i as any).cr9be_amount ?? 0), 0);
+    .filter((i) => getInvoiceStatus(i) !== "Paid")
+    .reduce((sum, i) => sum + (i.totalamount ?? 0), 0);
 
-  const getPlayerName = (inv: Invoices): string => {
-    const pid = (inv as any).cr9be_playerid || (inv as any)._cr9be_playerid_value;
-    const p = players.find((pl) => (pl as any).cr9be_playersid === pid);
-    return p ? ((p as any).cr9be_name as string) || "Player" : ((inv as any).cr9be_name as string) || "Player";
-  };
-
-  const getInitials = (name: string) => name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-
-  const sendReminder = async (inv: Invoices) => {
-    alert(`Reminder sent for invoice to ${getPlayerName(inv)}`);
-  };
+  const getInitials = (name: string) =>
+    name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   const btnGhost: React.CSSProperties = {
     background: "#fff",
@@ -110,10 +70,10 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
         }
       />
 
-      {loading && <LoadingSpinner label="Loading invoices…" />}
-      {error && <ErrorBanner message={error} onRetry={load} />}
+      {loading && invoices.length === 0 && <LoadingSpinner label="Loading invoices…" />}
+      {error && invoices.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
 
-      {!loading && (
+      {(!loading || invoices.length > 0) && (
         <>
           <div style={{ padding: "0 22px" }}>
             <div style={{ background: COLORS.navy, color: "#fff", borderRadius: 22, padding: 20, position: "relative", overflow: "hidden" }}>
@@ -149,15 +109,15 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
                 NO {tab.toUpperCase()} INVOICES
               </div>
             )}
-            {filtered.map((inv, i) => {
-              const invId = (inv as any).axm365_invoicesid || (inv as any).cr9be_invoicesid || i;
-              const name = getPlayerName(inv);
-              const amount = (inv as any).axm365_amount ?? (inv as any).cr9be_amount ?? 0;
-              const dueDate = (inv as any).axm365_duedate || (inv as any).cr9be_duedate;
+            {filtered.map((inv) => {
+              const name = inv.customeridname || inv.name || "Customer";
+              const amount = inv.totalamount ?? 0;
+              const dueDate = inv.duedate;
               const daysOverdue = dueDate ? Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000) : null;
+              const status = getInvoiceStatus(inv);
 
               return (
-                <div key={invId} style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderLeft: `3px solid ${tab === "Overdue" ? COLORS.red : tab === "Due Soon" ? COLORS.yellow : COLORS.green}`, borderRadius: 16, padding: 14 }}>
+                <div key={inv.invoiceid} style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderLeft: `3px solid ${status === "Overdue" ? COLORS.red : status === "Due Soon" ? COLORS.yellow : COLORS.green}`, borderRadius: 16, padding: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                       <div style={{ width: 40, height: 40, borderRadius: 12, background: COLORS.cream, color: COLORS.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 800, fontSize: 13 }}>
@@ -165,12 +125,15 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
                       </div>
                       <div>
                         <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 14 }}>{name}</div>
-                        {tab === "Overdue" && daysOverdue !== null && daysOverdue > 0 && (
+                        {inv.name && inv.name !== name && (
+                          <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.08em", marginTop: 1 }}>{inv.name}</div>
+                        )}
+                        {status === "Overdue" && daysOverdue !== null && daysOverdue > 0 && (
                           <div style={{ fontSize: 10.5, color: COLORS.red, fontFamily: monoStack, letterSpacing: "0.1em", fontWeight: 600, marginTop: 2 }}>
                             {daysOverdue} DAYS OVERDUE
                           </div>
                         )}
-                        {dueDate && tab !== "Overdue" && (
+                        {dueDate && status !== "Overdue" && (
                           <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em", marginTop: 2 }}>
                             DUE {new Date(dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase()}
                           </div>
@@ -180,16 +143,16 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy }}>€{Number(amount).toLocaleString()}</div>
                       <div style={{ fontSize: 10, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em" }}>
-                        {(inv as any).axm365_description || (inv as any).cr9be_description || "MONTHLY"}
+                        {inv.description || inv.invoicenumber || "INVOICE"}
                       </div>
                     </div>
                   </div>
 
-                  {tab !== "Paid" && (
+                  {status !== "Paid" && (
                     <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
                       <button style={btnGhost}><Phone size={12} /> Call</button>
                       <button style={btnGhost}><Mail size={12} /> Email</button>
-                      <button onClick={() => sendReminder(inv)} style={{ ...btnGhost, background: COLORS.navy, color: "#fff", border: "none", marginLeft: "auto" }}>
+                      <button style={{ ...btnGhost, background: COLORS.navy, color: "#fff", border: "none", marginLeft: "auto" }}>
                         Send Reminder →
                       </button>
                     </div>
