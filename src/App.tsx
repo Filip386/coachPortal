@@ -51,7 +51,7 @@ const App: React.FC = () => {
     }
   };
 
-  /* ── Mobile: full-screen app ── */
+  /* Mobile: full-screen app */
   if (isMobile) {
     return (
       <div
@@ -71,7 +71,7 @@ const App: React.FC = () => {
     );
   }
 
-  /* ── Desktop / tablet: phone mockup ── */
+  /* Desktop / tablet: phone mockup  */
   return (
     <div
       style={{

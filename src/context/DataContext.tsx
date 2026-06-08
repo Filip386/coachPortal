@@ -1,3 +1,5 @@
+/* eslint-disable */
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { getContext } from "@microsoft/power-apps/app";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
@@ -80,14 +82,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshAttendances = useCallback(async () => {
-    const res = await Axm365_eventattendancesService.getAll({ top: 500 });
+    const res = await Axm365_eventattendancesService.getAll({});
     const data = unwrapOrThrow<Axm365_eventattendances>(res);
     setAttendances(data);
     writeCache(CACHE.attendances, data);
   }, []);
 
   const refreshInvoices = useCallback(async () => {
-    const res = await InvoicesService.getAll({ top: 100 });
+    const res = await InvoicesService.getAll({ });
     const data = unwrapOrThrow<Invoices>(res);
     setInvoices(data);
     writeCache(CACHE.invoices, data);
@@ -106,7 +108,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }).catch(() => {});
 
     // Priority: players + events first (home screen needs them)
-    // Attendances deferred — not shown on home screen
+    // Attendances deferred - not shown on home screen
     Promise.all([refreshPlayers(), refreshEvents(), refreshInvoices()])
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));

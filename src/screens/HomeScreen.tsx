@@ -1,4 +1,4 @@
-/* eslint-disable */
+ 
 import React from "react";
 import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
