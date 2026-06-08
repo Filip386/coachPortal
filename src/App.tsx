@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { Smartphone, Maximize2 } from "lucide-react";
 import { PhoneFrameContext } from "./context/PhoneFrameContext";
 import { DataProvider } from "./context/DataContext";
 import { BottomNav } from "./components/shared";
@@ -30,6 +31,7 @@ const App: React.FC = () => {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [frameEl, setFrameEl] = useState<HTMLElement | null>(null);
+  const [showFrame, setShowFrame] = useState(true);
   const isMobile = useIsMobile();
 
   const go = (id: ScreenId, playerId?: string, eventId?: string) => {
@@ -67,6 +69,43 @@ const App: React.FC = () => {
           {renderScreen()}
         </div>
         <BottomNav active={activeNav} onChange={go} />
+      </div>
+    );
+  }
+
+  /* Toggle button shared styles */
+  const toggleBtn: React.CSSProperties = {
+    position: "fixed",
+    bottom: 24,
+    right: 24,
+    zIndex: 1000,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 16px",
+    borderRadius: 999,
+    border: "none",
+    cursor: "pointer",
+    fontFamily: fontStack,
+    fontSize: 13,
+    fontWeight: 600,
+    background: COLORS.yellow,
+    color: COLORS.navy,
+    boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+  };
+
+  /* Desktop / no-frame mode */
+  if (!showFrame) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: COLORS.cream, fontFamily: fontStack }}>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {renderScreen()}
+        </div>
+        <BottomNav active={activeNav} onChange={go} />
+        <button style={toggleBtn} onClick={() => setShowFrame(true)}>
+          <Smartphone size={15} />
+          Phone frame
+        </button>
       </div>
     );
   }
@@ -114,6 +153,12 @@ const App: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Exit frame button */}
+      <button style={toggleBtn} onClick={() => setShowFrame(false)}>
+        <Maximize2 size={15} />
+        Full screen
+      </button>
 
       {/* Phone frame */}
       <div
