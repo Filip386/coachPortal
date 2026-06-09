@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { IOperationResult } from "@microsoft/power-apps/data";
 
 export function unwrap<T>(result: unknown): T[] {
