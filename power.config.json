@@ -9,7 +9,16 @@
   "buildEntryPoint": "index.html",
   "localAppUrl": "http://localhost:3000",
   "logoPath": "Default",
-  "connectionReferences": {},
+  "connectionReferences": {
+    "000d44e1-d341-4825-9092-430a4f0a44b4": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
+      "displayName": "Microsoft Dataverse",
+      "dataSources": [
+        "commondataserviceforapps"
+      ],
+      "dataSets": {}
+    }
+  },
   "databaseReferences": {
     "default.cds": {
       "dataSources": {

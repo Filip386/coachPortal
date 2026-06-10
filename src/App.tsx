@@ -38,6 +38,9 @@ const App: React.FC = () => {
     setActiveNav(id);
     if (playerId !== undefined) setSelectedPlayerId(playerId);
     if (eventId !== undefined) setSelectedEventId(eventId);
+    // Opening Attendance without an explicit event (footer / home) → reset so it
+    // defaults to the last event. The Calendar passes an eventId, which pins it.
+    else if (id === "attendance") setSelectedEventId(null);
   };
 
   const renderScreen = () => {

@@ -6,6 +6,7 @@ import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner } from "../components/shared";
 import { useData } from "../context/DataContext";
+import { lookupName } from "../utils/dataverse";
 
 interface CalendarScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
@@ -149,7 +150,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go }) => {
             {selectedEvents.map((e, idx) => {
               const startDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
               const eventName = e.axm365_name || "Event";
-              const location = e.axm365_description || "TBD";
+              const location = lookupName(e, "axm365_facility") || e.axm365_description || "TBD";
 
               return (
                 <div key={idx} style={{ marginTop: 14 }}>

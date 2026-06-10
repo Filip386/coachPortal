@@ -7,9 +7,10 @@ interface ScreenHeaderProps {
   kicker?: string;
   onBack?: () => void;
   action?: React.ReactNode;
+  titleAction?: React.ReactNode;
 }
 
-export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ title, kicker, onBack, action }) => (
+export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ title, kicker, onBack, action, titleAction }) => (
   <div style={{ padding: "8px 22px 18px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
       <button
@@ -25,8 +26,11 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({ title, kicker, onBac
         {kicker}
       </div>
     )}
-    <h1 style={{ fontFamily: displayStack, fontSize: 30, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.02em", lineHeight: 1.05, margin: 0 }}>
-      {title}
-    </h1>
+    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+      <h1 style={{ fontFamily: displayStack, fontSize: 30, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.02em", lineHeight: 1.05, margin: 0 }}>
+        {title}
+      </h1>
+      {titleAction}
+    </div>
   </div>
 );
