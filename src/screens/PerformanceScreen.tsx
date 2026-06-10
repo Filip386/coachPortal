@@ -149,11 +149,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, select
                 placeholder={`Add your notes for ${playerName} here…`}
                 style={{ width: "100%", minHeight: 80, border: 0, outline: 0, fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, resize: "vertical", background: "transparent" }}
               />
-              <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <Chip>#pressing</Chip>
-                <Chip>#leadership</Chip>
-                <Chip yellow>+ add tag</Chip>
-              </div>
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
