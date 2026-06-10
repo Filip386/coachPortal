@@ -33,9 +33,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
   const [genSearch, setGenSearch] = useState("");
   const [showEventPicker, setShowEventPicker] = useState(false);
 
-  // Recent events the coach can switch between: today + yesterday only (older
-  // events are excluded). "last event" is the most recent of these and is the
-  // default when the screen is opened from the footer (no event passed in).
+  // Recent events the coach can switch between: today + yesterday only (older)
+  
   const { recentEvents, lastEvent } = useMemo(() => {
     const dated = events.filter((e) => e.axm365_eventdate);
     const now = new Date();
