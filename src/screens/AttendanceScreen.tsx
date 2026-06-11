@@ -29,13 +29,15 @@ interface AttendanceScreenProps {
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
   const portalTarget = usePortalTarget();
-  const { players, events, attendances, performances, loading, error, refreshAttendances, refreshPerformances } = useData();
+  const { players, events, attendances, performances, coachName, loading, error, refreshAttendances, refreshPerformances } = useData();
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
   const [selectedEventId, setSelectedEventId] = useState<string | null>(initialEventId ?? null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [selectedGenerationId, setSelectedGenerationId] = useState<string>("all");
+  const [genAutoSelected, setGenAutoSelected] = useState(false);
+  const [playerSearch, setPlayerSearch] = useState("");
   const [showGenerationPicker, setShowGenerationPicker] = useState(false);
   const [genSearch, setGenSearch] = useState("");
   const [showEventPicker, setShowEventPicker] = useState(false);
@@ -79,6 +81,27 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     });
     return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [players]);
+
+  // Auto-select the coach's own generation once on load
+  const coachGenId = useMemo(() => {
+    if (!coachName || players.length === 0) return null;
+    const coachPlayers = players.filter((p) => p.cr9be_coachname === coachName);
+    const counts = new Map<string, number>();
+    for (const p of coachPlayers) {
+      const id = (p as any)._cr9be_generation_value as string | undefined;
+      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    let top: string | null = null, max = 0;
+    counts.forEach((n, id) => { if (n > max) { max = n; top = id; } });
+    return top;
+  }, [coachName, players]);
+
+  useEffect(() => {
+    if (coachGenId && !genAutoSelected) {
+      setSelectedGenerationId(coachGenId);
+      setGenAutoSelected(true);
+    }
+  }, [coachGenId, genAutoSelected]);
 
   const shownPlayers = useMemo(
     () =>
@@ -321,11 +344,26 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
 
       {(!loading || players.length > 0) && shownPlayers.length > 0 && (
         <div style={{ padding: "18px 16px 20px" }}>
-          <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.16em", color: COLORS.mute, fontWeight: 600, marginBottom: 10, textTransform: "uppercase" }}>
-            Tap player name to edit performance
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search size={14} color={COLORS.mute} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+            <input
+              value={playerSearch}
+              onChange={(e) => setPlayerSearch(e.target.value)}
+              placeholder="Search player…"
+              style={{ width: "100%", padding: "10px 36px 10px 34px", borderRadius: 12, border: `1px solid ${COLORS.line}`, fontFamily: fontStack, fontSize: 13.5, color: COLORS.navy, outline: "none", boxSizing: "border-box", background: "#fff" }}
+            />
+            {playerSearch.length > 0 && (
+              <button
+                onClick={() => setPlayerSearch("")}
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 20, height: 20, borderRadius: 99, background: COLORS.line, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: "none" }}
+              >
+                <X size={11} color={COLORS.navy} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {shownPlayers.map((p) => {
+            {shownPlayers.filter((p) => !playerSearch || (p.cr9be_name || "").toLowerCase().includes(playerSearch.toLowerCase())).map((p) => {
               const playerId = p.cr9be_playerid;
               const name = p.cr9be_name || "Unknown Player";
               const num = p.cr9be_number ?? "?";
