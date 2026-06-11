@@ -3564,6 +3564,13 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "axm365_playereventperformances": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_playereventperformanceid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9be_players": {
     "tableId": "",
     "version": "",

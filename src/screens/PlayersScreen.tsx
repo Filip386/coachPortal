@@ -11,7 +11,7 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
-  const { players, loading, error, refreshPlayers } = useData();
+  const { players, performances, loading, error, refreshPlayers } = useData();
   const [pos, setPos] = useState("ALL");
   const [gen, setGen] = useState("ALL");
   const [showGenDropdown, setShowGenDropdown] = useState(false);
@@ -171,8 +171,10 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
             const num = p.cr9be_number ?? "?";
             const playerPos = lookupName(p, "cr9be_position");
             const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
-            const savedDraft = localStorage.getItem(`perf_draft_${playerId}`);
-            const perfRating: number = savedDraft ? (JSON.parse(savedDraft).rating ?? 4) : 4;
+            const playerPerfs = performances.filter((perf) => perf._axm365_cr9be_player_value === playerId);
+            const perfRating: number = playerPerfs.length > 0
+              ? Math.round(playerPerfs.reduce((sum, perf) => sum + ((perf.axm365_raiting as number ?? 693080001) - 693080000 + 1), 0) / playerPerfs.length)
+              : 2;
 
             return (
               <div

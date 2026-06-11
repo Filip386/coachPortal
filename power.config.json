@@ -41,6 +41,11 @@
           "entitySetName": "invoices",
           "logicalName": "invoice",
           "isHidden": false
+        },
+        "playereventperformances": {
+          "entitySetName": "axm365_playereventperformances",
+          "logicalName": "axm365_playereventperformance",
+          "isHidden": false
         }
       },
       "environmentVariableName": ""

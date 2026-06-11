@@ -6,10 +6,12 @@ import { Cr9be_playersService } from "../generated/services/Cr9be_playersService
 import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
 import { InvoicesService } from "../generated/services/InvoicesService";
+import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
 import type { Invoices } from "../generated/models/InvoicesModel";
+import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import { unwrapOrThrow, fetchAllPages, fetchFacilities } from "../utils/dataverse";
 import type { Facility } from "../utils/dataverse";
 
@@ -20,6 +22,7 @@ interface DataContextValue {
   attendances: Axm365_eventattendances[];
   invoices: Invoices[];
   facilities: Facility[];
+  performances: Axm365_playereventperformances[];
   loading: boolean;
   error: string | null;
   refreshPlayers: () => Promise<void>;
@@ -27,6 +30,7 @@ interface DataContextValue {
   refreshAttendances: () => Promise<void>;
   refreshInvoices: () => Promise<void>;
   refreshFacilities: () => Promise<void>;
+  refreshPerformances: () => Promise<void>;
   refreshAll: () => Promise<void>;
 }
 
@@ -38,6 +42,7 @@ const CACHE = {
   attendances: "cvf_attendances",
   invoices: "cvf_invoices",
   facilities: "cvf_facilities",
+  performances: "cvf_performances",
 };
 
 function readCache<T>(key: string): T[] {
@@ -62,6 +67,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [attendances, setAttendances] = useState<Axm365_eventattendances[]>(() => readCache(CACHE.attendances));
   const [invoices, setInvoices] = useState<Invoices[]>(() => readCache(CACHE.invoices));
   const [facilities, setFacilities] = useState<Facility[]>(() => readCache(CACHE.facilities));
+  const [performances, setPerformances] = useState<Axm365_playereventperformances[]>(() => readCache(CACHE.performances));
 
   // loading = true only on very first open (nothing in cache)
   const hasCache = readCache(CACHE.players).length > 0 || readCache(CACHE.events).length > 0;
@@ -106,9 +112,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     writeCache(CACHE.facilities, data);
   }, []);
 
+  const refreshPerformances = useCallback(async () => {
+    const res = await Axm365_playereventperformancesService.getAll({});
+    const data = unwrapOrThrow<Axm365_playereventperformances>(res);
+    setPerformances(data);
+    writeCache(CACHE.performances, data);
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshPlayers(), refreshEvents(), refreshAttendances(), refreshInvoices(), refreshFacilities()]);
-  }, [refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities]);
+    await Promise.all([refreshPlayers(), refreshEvents(), refreshAttendances(), refreshInvoices(), refreshFacilities(), refreshPerformances()]);
+  }, [refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances]);
 
   useEffect(() => {
     setError(null);
@@ -124,13 +137,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));
 
-    // Attendances + facilities load in background after primary data
+    // Attendances, facilities, performances load in background after primary data
     refreshAttendances().catch(() => {});
     refreshFacilities().catch(() => {});
+    refreshPerformances().catch(() => {});
   }, []);
 
   return (
-    <DataContext.Provider value={{ coachName, players, events, attendances, invoices, facilities, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshAll }}>
+    <DataContext.Provider value={{ coachName, players, events, attendances, invoices, facilities, performances, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshAll }}>
       {children}
     </DataContext.Provider>
   );

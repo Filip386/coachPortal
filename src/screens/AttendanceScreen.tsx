@@ -4,16 +4,23 @@ import { createPortal } from "react-dom";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { ChevronLeft, Check, X, RefreshCw, Star, ChevronDown, Search } from "lucide-react";
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
+import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, LoadingSpinner, ErrorBanner } from "../components/shared";
-import { Tally, MarkBtn, SuccessBanner } from "../components/ui";
+import { Tally, MarkBtn, SuccessBanner, AttributeSlider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
-// "late" is kept in the model so previously-saved late records still load,
-// but it is no longer selectable in the UI.
 type AttendanceMark = "present" | "late" | "absent";
+
+const RATING_DEFAULTS: Record<number, number> = { 1: 10, 2: 30, 3: 50, 4: 70, 5: 90 };
+const CODE_TO_STARS = (code?: number): number =>
+  code !== undefined ? (code as number) - 693080000 + 1 : 2;
+const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
+  const avg = (t + e + ta + tp) / 4;
+  return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
+};
 
 interface AttendanceScreenProps {
   go: (id: ScreenId) => void;
@@ -22,7 +29,7 @@ interface AttendanceScreenProps {
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
   const portalTarget = usePortalTarget();
-  const { players, events, attendances, loading, error, refreshAttendances } = useData();
+  const { players, events, attendances, performances, loading, error, refreshAttendances, refreshPerformances } = useData();
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
@@ -33,8 +40,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
   const [genSearch, setGenSearch] = useState("");
   const [showEventPicker, setShowEventPicker] = useState(false);
 
-  // Recent events the coach can switch between: today + yesterday only (older)
-  
+  // Performance edit modal state
+  const [perfEditPlayerId, setPerfEditPlayerId] = useState<string | null>(null);
+  const [editRating, setEditRating] = useState(2);
+  const [editTechnique, setEditTechnique] = useState(30);
+  const [editEffort, setEditEffort] = useState(30);
+  const [editTactical, setEditTactical] = useState(30);
+  const [editTeamPlay, setEditTeamPlay] = useState(30);
+  const [editNotes, setEditNotes] = useState("");
+  const [perfSaving, setPerfSaving] = useState(false);
+  const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
+  const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
+
   const { recentEvents, lastEvent } = useMemo(() => {
     const dated = events.filter((e) => e.axm365_eventdate);
     const now = new Date();
@@ -53,7 +70,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     return { recentEvents: recent, lastEvent: last };
   }, [events]);
 
-  // Distinct generations across the squad (for the top-right filter).
   const generations = useMemo(() => {
     const byId = new Map<string, string>();
     players.forEach((p) => {
@@ -64,7 +80,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [players]);
 
-  // Players shown = filtered by the chosen generation.
   const shownPlayers = useMemo(
     () =>
       selectedGenerationId === "all"
@@ -78,16 +93,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
       ? "All Generations"
       : generations.find((g) => g.id === selectedGenerationId)?.name ?? "All Generations";
 
-  // Set default event once events are available (only if no event was passed in)
-  // — defaults to the last (most recent) event, e.g. when opened from the footer.
   useEffect(() => {
     if (events.length > 0 && !selectedEventId && !initialEventId) {
       setSelectedEventId(lastEvent?.axm365_eventid ?? events[0].axm365_eventid);
     }
   }, [events, lastEvent]);
 
-  // Default everyone to Present, then overlay any saved records for this event.
-  // The coach only needs to flip the absentees — fewest clicks.
   useEffect(() => {
     const base: Record<string, AttendanceMark> = {};
     for (const p of players) base[p.cr9be_playerid] = "present";
@@ -103,9 +114,92 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     setMarks(base);
   }, [selectedEventId, attendances, players]);
 
+  // Load performance data when modal opens for a player+event
+  useEffect(() => {
+    if (!perfEditPlayerId || !selectedEventId) return;
+    const existing = performances.find(
+      (p) => p._axm365_cr9be_player_value === perfEditPlayerId && p._axm365_event_value === selectedEventId
+    );
+    if (existing) {
+      const stars = CODE_TO_STARS(existing.axm365_raiting as number | undefined);
+      setEditRating(stars);
+      setEditTechnique(existing.axm365_technique ?? RATING_DEFAULTS[stars]);
+      setEditEffort(existing.axm365_effort ?? RATING_DEFAULTS[stars]);
+      setEditTactical(existing.axm365_tacticalawareness ?? RATING_DEFAULTS[stars]);
+      setEditTeamPlay(existing.axm365_teamplay ?? RATING_DEFAULTS[stars]);
+      setEditNotes(existing.axm365_notes ?? "");
+    } else {
+      setEditRating(2);
+      setEditTechnique(30);
+      setEditEffort(30);
+      setEditTactical(30);
+      setEditTeamPlay(30);
+      setEditNotes("");
+    }
+    setPerfSaveSuccess(false);
+    setPerfSaveError(null);
+  }, [perfEditPlayerId, selectedEventId]);
+
+  const handleEditRatingChange = (stars: number) => {
+    const def = RATING_DEFAULTS[stars] ?? 50;
+    setEditRating(stars);
+    setEditTechnique(def);
+    setEditEffort(def);
+    setEditTactical(def);
+    setEditTeamPlay(def);
+  };
+
+  const handleTechChange = (v: number) => { setEditTechnique(v); setEditRating(recalcRating(v, editEffort, editTactical, editTeamPlay)); };
+  const handleEffortChange = (v: number) => { setEditEffort(v); setEditRating(recalcRating(editTechnique, v, editTactical, editTeamPlay)); };
+  const handleTacticalChange = (v: number) => { setEditTactical(v); setEditRating(recalcRating(editTechnique, editEffort, v, editTeamPlay)); };
+  const handleTeamPlayChange = (v: number) => { setEditTeamPlay(v); setEditRating(recalcRating(editTechnique, editEffort, editTactical, v)); };
+
+  const savePerfData = async () => {
+    if (!perfEditPlayerId || !selectedEventId) return;
+    setPerfSaving(true);
+    setPerfSaveError(null);
+    try {
+      const existing = performances.find(
+        (p) => p._axm365_cr9be_player_value === perfEditPlayerId && p._axm365_event_value === selectedEventId
+      );
+      const perfPlayer = players.find((p) => p.cr9be_playerid === perfEditPlayerId);
+      const selectedEvent = events.find((e) => e.axm365_eventid === selectedEventId);
+      const ratingCode = 693080000 + (editRating - 1);
+      const payload = {
+        axm365_performancename: `${perfPlayer?.cr9be_name ?? "Player"} - ${selectedEvent?.axm365_name ?? "Event"}`,
+        axm365_raiting: ratingCode as any,
+        axm365_technique: editTechnique,
+        axm365_effort: editEffort,
+        axm365_tacticalawareness: editTactical,
+        axm365_teamplay: editTeamPlay,
+        axm365_notes: editNotes,
+      };
+      if (existing) {
+        const res = await Axm365_playereventperformancesService.update(existing.axm365_playereventperformanceid, payload as any);
+        if (!res.success) throw new Error((res.error as any)?.message ?? JSON.stringify(res.error) ?? "Update failed");
+      } else {
+        const res = await Axm365_playereventperformancesService.create({
+          ...payload,
+          "axm365_cr9be_Player@odata.bind": `/cr9be_players(${perfEditPlayerId})`,
+          "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
+        } as any);
+        if (!res.success) throw new Error((res.error as any)?.message ?? JSON.stringify(res.error) ?? "Create failed");
+      }
+      refreshPerformances().catch(() => {});
+      setPerfSaveSuccess(true);
+      setTimeout(() => {
+        setPerfSaveSuccess(false);
+        setPerfEditPlayerId(null);
+      }, 1500);
+    } catch (err) {
+      setPerfSaveError(err instanceof Error ? err.message : "Failed to save performance");
+    } finally {
+      setPerfSaving(false);
+    }
+  };
+
   const setMark = (id: string, v: AttendanceMark) => setMarks((m) => ({ ...m, [id]: v }));
 
-  // Counts for the players currently shown (late counts as present since hidden).
   const presentCount = shownPlayers.filter((p) => (marks[p.cr9be_playerid] ?? "present") !== "absent").length;
   const absentCount = shownPlayers.filter((p) => marks[p.cr9be_playerid] === "absent").length;
   const attendancePct = shownPlayers.length > 0 ? Math.round((presentCount / shownPlayers.length) * 100) : 0;
@@ -161,6 +255,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
 
   const selectedEvent = events.find((e) => e.axm365_eventid === selectedEventId);
   const eventName = selectedEvent ? selectedEvent.axm365_name : "Select Event";
+
+  // Player whose performance modal is open
+  const perfEditPlayer = players.find((p) => p.cr9be_playerid === perfEditPlayerId);
 
   return (
     <>
@@ -224,6 +321,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
 
       {(!loading || players.length > 0) && shownPlayers.length > 0 && (
         <div style={{ padding: "18px 16px 20px" }}>
+          <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.16em", color: COLORS.mute, fontWeight: 600, marginBottom: 10, textTransform: "uppercase" }}>
+            Tap player name to edit performance
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {shownPlayers.map((p) => {
               const playerId = p.cr9be_playerid;
@@ -231,29 +331,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
               const num = p.cr9be_number ?? "?";
               const pos = lookupName(p, "cr9be_position");
               const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
-              const savedDraft = localStorage.getItem(`perf_draft_${playerId}`);
-              const perfRating: number = savedDraft ? (JSON.parse(savedDraft).rating ?? 4) : 4;
+
+              // Get real performance data from Dataverse
+              const existingPerf = performances.find(
+                (perf) => perf._axm365_cr9be_player_value === playerId && perf._axm365_event_value === selectedEventId
+              );
+              const perfRating = existingPerf
+                ? CODE_TO_STARS(existingPerf.axm365_raiting as number | undefined)
+                : 2;
+
               const isAbsent = marks[playerId] === "absent";
               return (
                 <div key={playerId} style={{ background: "#fff", borderRadius: 16, padding: 12, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: 12, background: COLORS.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 800, fontSize: 13, position: "relative" }}>
-                    {initials}
-                    <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
-                      {num}
-                    </span>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 13.5 }}>{name}</div>
-                    <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em", marginTop: 2 }}>
-                      {pos ? `${pos} · ` : ""}#{num}
+                  {/* Clickable area for performance edit */}
+                  <div
+                    onClick={() => setPerfEditPlayerId(playerId)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}
+                  >
+                    <div style={{ width: 42, height: 42, borderRadius: 12, background: COLORS.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 800, fontSize: 13, position: "relative", flexShrink: 0 }}>
+                      {initials}
+                      <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
+                        {num}
+                      </span>
                     </div>
-                    <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <Star key={n} size={11} color={n <= perfRating ? COLORS.yellow : COLORS.line} fill={n <= perfRating ? COLORS.yellow : "none"} strokeWidth={1.5} />
-                      ))}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 13.5 }}>{name}</div>
+                      <div style={{ fontSize: 10.5, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em", marginTop: 2 }}>
+                        {pos ? `${pos} · ` : ""}#{num}
+                      </div>
+                      <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <Star key={n} size={11} color={n <= perfRating ? COLORS.yellow : COLORS.line} fill={n <= perfRating ? COLORS.yellow : "none"} strokeWidth={1.5} />
+                        ))}
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                     <MarkBtn active={!isAbsent} onClick={() => setMark(playerId, "present")} bg={COLORS.green}><Check size={16} /></MarkBtn>
                     <MarkBtn active={isAbsent} onClick={() => setMark(playerId, "absent")} bg={COLORS.red}><X size={16} /></MarkBtn>
                   </div>
@@ -281,6 +394,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         </div>
       )}
 
+      {/* Generation picker modal */}
       {showGenerationPicker && (() => {
         const filteredGens = generations.filter((g) => g.name.toLowerCase().includes(genSearch.toLowerCase()));
         const options = [{ id: "all", name: "All Generations" }, ...filteredGens];
@@ -296,7 +410,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
               <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center" }}>
                 <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
               </div>
-
               <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
                 <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy, marginBottom: 10 }}>Choose Generation</div>
                 <div style={{ position: "relative" }}>
@@ -310,7 +423,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
                   />
                 </div>
               </div>
-
               <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {options.length === 0 && (
                   <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO GENERATIONS FOUND</div>
@@ -324,9 +436,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
                       style={{ background: isActive ? COLORS.navy : "#fff", border: `1px solid ${isActive ? COLORS.navy : COLORS.line}`, borderRadius: 14, padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, color: isActive ? "#fff" : COLORS.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {g.name}
-                        </div>
+                        <div style={{ fontWeight: 700, color: isActive ? "#fff" : COLORS.navy, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</div>
                       </div>
                       {isActive && <Check size={16} color={COLORS.yellow} strokeWidth={2.5} style={{ flexShrink: 0 }} />}
                     </button>
@@ -339,6 +449,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         return portalTarget ? createPortal(modal, portalTarget) : modal;
       })()}
 
+      {/* Event picker modal */}
       {showEventPicker && (() => {
         const modal = (
           <div
@@ -352,12 +463,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
               <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center" }}>
                 <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
               </div>
-
               <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
                 <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy }}>Choose Event</div>
                 <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.12em", color: COLORS.mute, marginTop: 4, textTransform: "uppercase" }}>Today &amp; yesterday</div>
               </div>
-
               <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {recentEvents.length === 0 && (
                   <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO RECENT EVENTS</div>
@@ -397,6 +506,122 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        );
+        return portalTarget ? createPortal(modal, portalTarget) : modal;
+      })()}
+
+      {/* Performance edit modal */}
+      {perfEditPlayerId && (() => {
+        const modal = (
+          <div
+            style={{ position: portalTarget ? "absolute" : "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end" }}
+            onClick={() => !perfSaving && setPerfEditPlayerId(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              {/* Handle */}
+              <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
+              </div>
+
+              {/* Header */}
+              <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: COLORS.navy, color: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 900, fontSize: 16 }}>
+                    {(perfEditPlayer?.cr9be_name || "P").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{perfEditPlayer?.cr9be_name || "Player"}</div>
+                    <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>
+                      {eventName} · Edit Performance
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setPerfEditPlayerId(null)}
+                    style={{ width: 32, height: 32, borderRadius: 99, background: COLORS.cream, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                  >
+                    <X size={14} color={COLORS.navy} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable body */}
+              <div style={{ overflowY: "auto", padding: "16px 22px 30px", display: "flex", flexDirection: "column", gap: 20 }}>
+                {perfSaveSuccess && (
+                  <div style={{ background: COLORS.green, color: "#fff", borderRadius: 12, padding: "10px 14px", textAlign: "center", fontWeight: 600, fontSize: 13 }}>
+                    Performance saved!
+                  </div>
+                )}
+                {perfSaveError && (
+                  <div style={{ background: "#FEE2E2", color: "#DC2626", borderRadius: 12, padding: "10px 14px", fontSize: 12 }}>
+                    {perfSaveError}
+                  </div>
+                )}
+
+                {/* Rating */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
+                    Session Rating
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => handleEditRatingChange(n)}
+                        style={{ width: 42, height: 42, borderRadius: 12, border: 0, background: n <= editRating ? COLORS.yellow : "#F3F0E5", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                      >
+                        <Star size={19} color={n <= editRating ? COLORS.navy : COLORS.mute} fill={n <= editRating ? COLORS.navy : "none"} strokeWidth={2} />
+                      </button>
+                    ))}
+                    <div style={{ marginLeft: "auto", fontFamily: displayStack, fontWeight: 800, fontSize: 28, color: COLORS.navy }}>{editRating}.0</div>
+                  </div>
+                  <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.1em", marginTop: 6 }}>
+                    Changing rating resets sliders · Sliders update rating automatically
+                  </div>
+                </div>
+
+                {/* Sliders */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 12 }}>
+                    Attributes
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <AttributeSlider label="Technique" value={editTechnique} onChange={handleTechChange} />
+                    <AttributeSlider label="Effort" value={editEffort} onChange={handleEffortChange} />
+                    <AttributeSlider label="Tactical Awareness" value={editTactical} onChange={handleTacticalChange} />
+                    <AttributeSlider label="Team Play" value={editTeamPlay} onChange={handleTeamPlayChange} />
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
+                    Notes
+                  </div>
+                  <div style={{ background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: 12 }}>
+                    <textarea
+                      value={editNotes}
+                      onChange={(e) => setEditNotes(e.target.value)}
+                      placeholder={`Notes for ${perfEditPlayer?.cr9be_name ?? "player"}…`}
+                      style={{ width: "100%", minHeight: 70, border: 0, outline: 0, fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, resize: "vertical", background: "transparent" }}
+                    />
+                  </div>
+                </div>
+
+                {/* Save button */}
+                <button
+                  disabled={perfSaving}
+                  onClick={savePerfData}
+                  style={{ width: "100%", padding: "14px 0", background: perfSaving ? COLORS.mute : COLORS.navy, color: "#fff", border: 0, borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: perfSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {perfSaving && <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />}
+                  {perfSaving ? "Saving…" : "Save Performance →"}
+                </button>
               </div>
             </div>
           </div>
