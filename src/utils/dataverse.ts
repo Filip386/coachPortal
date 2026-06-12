@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { IOperationResult } from "@microsoft/power-apps/data";
+import { EquipmentsService } from "../generated/services/EquipmentsService";
 import { MicrosoftDataverseService } from "../generated/services/MicrosoftDataverseService";
 
 export interface Facility {
@@ -7,27 +8,51 @@ export interface Facility {
   name: string;
 }
 
-/** Fetches all rows from the axm365_facility ("Facility/Equipment") table.
- *  This table is exposed through the generic Microsoft Dataverse connector
- *  (added via `pac code add-data-source`), so records come back untyped — we
- *  read them defensively. Used to populate the event location dropdown. */
+// Org URL of the environment (from `pac env who`); the generic Dataverse
+// connector needs it because the connection has no default organization.
+const DATAVERSE_ORG_URL = "https://org2560bf82.crm4.dynamics.com/";
+
+function toFacilities(items: any[]): Facility[] {
+  return items
+    .map((item: any) => {
+      const rec = (item?.dynamicProperties ?? item) as Record<string, unknown>;
+      const id = rec?.equipmentid as string | undefined;
+      const name = rec?.name as string | undefined;
+      return id && name ? { id, name } : null;
+    })
+    .filter((f: any): f is Facility => f !== null)
+    .sort((a: Facility, b: Facility) => a.name.localeCompare(b.name));
+}
+
 export async function fetchFacilities(): Promise<Facility[]> {
-  const res = await MicrosoftDataverseService.ListRecords("axm365_facilities");
+  // Preferred: typed service (works once the table is registered platform-side)
+  try {
+    const res = await EquipmentsService.getAll({ select: ["equipmentid", "name"] });
+    if (res.success) {
+      const facilities = toFacilities(unwrap<any>(res));
+      if (facilities.length > 0) return facilities;
+    }
+  } catch {
+    // fall through to connector path
+  }
+
+  // Fallback: generic Dataverse connector with explicit organization URL
+  const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
+    DATAVERSE_ORG_URL,
+    "equipments",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "equipmentid,name"
+  );
   if (!res.success) {
     const msg = (res.error as any)?.message ?? "Failed to load facilities";
-    throw new Error(msg);
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
   }
-  const items = (res.data?.value ?? []) as any[];
-  const facilities = items
-    .map((item) => {
-      // Connector may nest the row under dynamicProperties or return it flat.
-      const rec = (item?.dynamicProperties ?? item) as Record<string, unknown>;
-      const id = rec?.["axm365_facilityid"] as string | undefined;
-      const name = (rec?.["axm365_name"] as string | undefined) ?? "";
-      return id ? { id, name: name || id } : null;
-    })
-    .filter((f): f is Facility => f !== null);
-  return facilities.sort((a, b) => a.name.localeCompare(b.name));
+  const data = res.data as Record<string, unknown> | undefined;
+  const items = (data?.value ?? (data as any)?.items ?? []) as any[];
+  return toFacilities(items);
 }
 
 export function unwrap<T>(result: unknown): T[] {

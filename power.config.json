@@ -46,6 +46,11 @@
           "entitySetName": "axm365_playereventperformances",
           "logicalName": "axm365_playereventperformance",
           "isHidden": false
+        },
+        "facilities_equipment": {
+          "entitySetName": "equipments",
+          "logicalName": "equipment",
+          "isHidden": false
         }
       },
       "environmentVariableName": ""

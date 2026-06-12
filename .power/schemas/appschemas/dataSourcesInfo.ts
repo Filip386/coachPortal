@@ -3557,6 +3557,13 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "equipments": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "equipmentid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "invoices": {
     "tableId": "",
     "version": "",

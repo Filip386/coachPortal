@@ -30,7 +30,7 @@ const EVENT_TYPES = Object.entries(Axm365_eventsaxm365_eventtype).map(([code, na
 }));
 
 export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
-  const { events, facilities: allFacilities, refreshEvents } = useData();
+  const { events, facilities: allFacilities, refreshEvents, refreshFacilities } = useData();
   const [typeCode, setTypeCode] = useState<number>(EVENT_TYPES[0]?.code ?? 216260000);
   const [title, setTitle] = useState("");
   const [titleEdited, setTitleEdited] = useState(false);
@@ -42,6 +42,8 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [facilitiesError, setFacilitiesError] = useState<string | null>(null);
+  const [loadingFacilities, setLoadingFacilities] = useState(false);
 
   // Auto-populate the title from the selected event type + date until the
   // coach edits it manually (mirrors how the model-driven app names events).
@@ -67,6 +69,20 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
     );
   }, [allFacilities, events]);
 
+  const handleRetryFacilities = async () => {
+    setLoadingFacilities(true);
+    setFacilitiesError(null);
+    try {
+      await refreshFacilities();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setFacilitiesError(msg);
+      console.error("[CoachPortal] Facilities retry failed:", msg);
+    } finally {
+      setLoadingFacilities(false);
+    }
+  };
+
   const handleCreate = async () => {
     // Always send a non-empty name — fall back to "<Type> <date>" if the field
     // is somehow blank, so the event is never created without a title.
@@ -79,7 +95,7 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
         axm365_name: finalTitle,
         axm365_eventdate: `${date}T${time}:00`,
         axm365_eventtype: typeCode as any,
-        ...(facilityId && { "axm365_Facility@odata.bind": `/axm365_facilities(${facilityId})` }),
+        ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
       } as any);
       await refreshEvents().catch(() => {});
       setSuccess(true);
@@ -186,8 +202,30 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
                 }}
               >
                 {facilities.length === 0 ? (
-                  <div style={{ padding: "12px 16px", color: COLORS.mute, fontSize: 13, textAlign: "center" }}>
-                    No facilities available
+                  <div style={{ padding: "12px 16px", textAlign: "center" }}>
+                    {facilitiesError ? (
+                      <>
+                        <div style={{ color: "#c0392b", fontSize: 12, marginBottom: 8 }}>
+                          Failed: {facilitiesError}
+                        </div>
+                        <button onClick={handleRetryFacilities} disabled={loadingFacilities}
+                          style={{ fontSize: 12, color: COLORS.navy, background: "none", border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: "4px 12px", cursor: "pointer" }}>
+                          {loadingFacilities ? "Loading…" : "Retry"}
+                        </button>
+                      </>
+                    ) : (
+                      <div style={{ color: COLORS.mute, fontSize: 13 }}>
+                        {loadingFacilities ? "Loading facilities…" : (
+                          <>
+                            No facilities found.{" "}
+                            <button onClick={handleRetryFacilities}
+                              style={{ fontSize: 12, color: COLORS.navy, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                              Retry
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   facilities.map((facility) => {

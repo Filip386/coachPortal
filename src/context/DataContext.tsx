@@ -139,7 +139,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Attendances, facilities, performances load in background after primary data
     refreshAttendances().catch(() => {});
-    refreshFacilities().catch(() => {});
+    refreshFacilities().catch((err) => { console.error("[CoachPortal] Facilities load failed:", err); });
     refreshPerformances().catch(() => {});
   }, []);
 
