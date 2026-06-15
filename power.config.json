@@ -51,6 +51,18 @@
           "entitySetName": "equipments",
           "logicalName": "equipment",
           "isHidden": false
+        },
+        "coaches": {
+          "entitySetName": "cr9be_coachs",
+          "logicalName": "cr9be_coach"
+        },
+        "generationstocoaches": {
+          "entitySetName": "axm365_generationstocoacheses",
+          "logicalName": "axm365_generationstocoaches"
+        },
+        "generations": {
+          "entitySetName": "axm365_generations",
+          "logicalName": "axm365_generation"
         }
       },
       "environmentVariableName": ""

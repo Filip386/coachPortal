@@ -29,7 +29,7 @@ interface AttendanceScreenProps {
 
 export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
   const portalTarget = usePortalTarget();
-  const { players, events, attendances, performances, coachName, loading, error, refreshAttendances, refreshPerformances } = useData();
+  const { players, events, attendances, performances, coachName, loading, error, refreshAttendances, refreshPerformances, allGenerations, generationsToCoaches } = useData();
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
@@ -72,36 +72,62 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     return { recentEvents: recent, lastEvent: last };
   }, [events]);
 
+  // Build this coach's generation list from player records (reliable) + secondary junction table.
+  // Falls back to all player generations when no coach-specific match (e.g. during load or test accounts).
   const generations = useMemo(() => {
-    const byId = new Map<string, string>();
-    players.forEach((p) => {
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+
+    const coachPlayers = coachName
+      ? players.filter((p) => p.cr9be_coachname === coachName)
+      : [];
+    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
+
+    sourcePlayers.forEach((p) => {
       const id = (p as any)._cr9be_generation_value as string | undefined;
       const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
-      if (id && name && !byId.has(id)) byId.set(id, name);
+      if (id && name && !seen.has(id)) {
+        seen.add(id);
+        result.push({ id, name });
+      }
     });
-    return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [players]);
 
-  // Auto-select the coach's own generation once on load
-  const coachGenId = useMemo(() => {
-    if (!coachName || players.length === 0) return null;
-    const coachPlayers = players.filter((p) => p.cr9be_coachname === coachName);
-    const counts = new Map<string, number>();
-    for (const p of coachPlayers) {
-      const id = (p as any)._cr9be_generation_value as string | undefined;
-      if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
-    let top: string | null = null, max = 0;
-    counts.forEach((n, id) => { if (n > max) { max = n; top = id; } });
-    return top;
-  }, [coachName, players]);
+    // Secondary generations from the junction table (generationstocoaches)
+    generationsToCoaches
+      .filter((gtc) => gtc.axm365_coachname === coachName)
+      .forEach((gtc) => {
+        const genId = (gtc as any)._axm365_generation_value as string | undefined;
+        const genName = gtc.axm365_generationname;
+        if (genId && genName && !seen.has(genId)) {
+          seen.add(genId);
+          result.push({ id: genId, name: genName });
+        }
+      });
+
+    const yearOf = (s: string) => {
+      const m = s.match(/\d{4}/) || s.match(/\d+/);
+      return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
+    };
+    return result.sort((a, b) => {
+      const ya = yearOf(a.name), yb = yearOf(b.name);
+      return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
+    });
+  }, [coachName, players, generationsToCoaches]);
+
+  // Primary generation: first from Axm365_generations table for this coach,
+  // falling back to first entry in the player-derived list above
+  const primaryGenId = useMemo(() => {
+    if (!coachName) return null;
+    const fromTable = allGenerations.find((g) => g.cr9be_coachname === coachName);
+    return fromTable?.axm365_generationid ?? generations[0]?.id ?? null;
+  }, [coachName, allGenerations, generations]);
 
   useEffect(() => {
-    if (coachGenId && !genAutoSelected) {
-      setSelectedGenerationId(coachGenId);
+    if (primaryGenId && !genAutoSelected) {
+      setSelectedGenerationId(primaryGenId);
       setGenAutoSelected(true);
     }
-  }, [coachGenId, genAutoSelected]);
+  }, [primaryGenId, genAutoSelected]);
 
   const shownPlayers = useMemo(
     () =>

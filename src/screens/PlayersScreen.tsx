@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Search, RefreshCw, ChevronRight, ChevronDown, Star, X } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
@@ -11,9 +11,10 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
-  const { players, performances, loading, error, refreshPlayers } = useData();
+  const { players, performances, loading, error, refreshPlayers, coachName, allGenerations, generationsToCoaches } = useData();
   const [pos, setPos] = useState("ALL");
-  const [gen, setGen] = useState("ALL");
+  const [genId, setGenId] = useState("all");
+  const [genAutoSelected, setGenAutoSelected] = useState(false);
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [genSearch, setGenSearch] = useState("");
   const [search, setSearch] = useState("");
@@ -25,33 +26,82 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
     setRefreshing(false);
   };
 
-  // Build filter tabs from real data — only positions / generations that exist
+  // Build generation list for this coach: from their players + secondary junction table.
+  // Falls back to all player generations when no coach-specific match (e.g. during load or test accounts).
+  const generationTabs = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+
+    const coachPlayers = coachName
+      ? players.filter((p) => p.cr9be_coachname === coachName)
+      : [];
+    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
+
+    sourcePlayers.forEach((p) => {
+      const id = (p as any)._cr9be_generation_value as string | undefined;
+      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
+      if (id && name && !seen.has(id)) {
+        seen.add(id);
+        result.push({ id, name });
+      }
+    });
+
+    // Secondary generations from the junction table
+    generationsToCoaches
+      .filter((gtc) => gtc.axm365_coachname === coachName)
+      .forEach((gtc) => {
+        const id = (gtc as any)._axm365_generation_value as string | undefined;
+        const name = gtc.axm365_generationname;
+        if (id && name && !seen.has(id)) {
+          seen.add(id);
+          result.push({ id, name });
+        }
+      });
+
+    const yearOf = (s: string) => {
+      const m = s.match(/\d{4}/) || s.match(/\d+/);
+      return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
+    };
+    return result.sort((a, b) => {
+      const ya = yearOf(a.name), yb = yearOf(b.name);
+      return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
+    });
+  }, [coachName, players, generationsToCoaches]);
+
+  // Primary generation: first from allGenerations table for this coach, fallback to first in list
+  const primaryGenId = useMemo(() => {
+    if (!coachName) return null;
+    const fromTable = allGenerations.find((g) => g.cr9be_coachname === coachName);
+    return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
+  }, [coachName, allGenerations, generationTabs]);
+
+  useEffect(() => {
+    if (primaryGenId && !genAutoSelected) {
+      setGenId(primaryGenId);
+      setGenAutoSelected(true);
+    }
+  }, [primaryGenId, genAutoSelected]);
+
+  // Build filter tabs from real data — only positions that exist
   const positionTabs = Array.from(
     new Set(players.map((p) => lookupName(p, "cr9be_position")).filter(Boolean))
   ) as string[];
-  // Generations are year-based — sort by the year in the name (ascending).
-  const yearOf = (s: string) => {
-    const m = s.match(/\d{4}/) || s.match(/\d+/);
-    return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
-  };
-  const generationTabs = (Array.from(
-    new Set(players.map((p) => lookupName(p, "cr9be_generation")).filter(Boolean))
-  ) as string[]).sort((a, b) => {
-    const ya = yearOf(a), yb = yearOf(b);
-    return ya !== yb ? ya - yb : a.localeCompare(b);
-  });
 
   const filtered = players.filter((p) => {
     const matchPos = pos === "ALL" || (lookupName(p, "cr9be_position") ?? "") === pos;
-    const matchGen = gen === "ALL" || (lookupName(p, "cr9be_generation") ?? "") === gen;
+    const matchGen = genId === "all" || (p as any)._cr9be_generation_value === genId;
     const matchSearch = search === "" || (p.cr9be_name || "").toLowerCase().includes(search.toLowerCase());
     return matchPos && matchGen && matchSearch;
   });
 
+  const selectedGenName = genId === "all"
+    ? "All Years"
+    : generationTabs.find((g) => g.id === genId)?.name ?? "All Years";
+
   const genOptions = [
-    { key: "ALL", label: "All Generations" },
-    ...generationTabs.map((g) => ({ key: g, label: g })),
-  ].filter((o) => o.label.toLowerCase().includes(genSearch.toLowerCase()));
+    { id: "all", name: "All Generations" },
+    ...generationTabs,
+  ].filter((o) => o.name.toLowerCase().includes(genSearch.toLowerCase()));
 
   return (
     <>
@@ -76,7 +126,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
                 onClick={() => setShowGenDropdown(!showGenDropdown)}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 12, fontSize: 12.5, color: COLORS.navy, fontFamily: fontStack, cursor: "pointer", fontWeight: 700, maxWidth: 150 }}
               >
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gen === "ALL" ? "All Years" : gen}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedGenName}</span>
                 <ChevronDown size={15} color={COLORS.navy} strokeWidth={2} style={{ transform: showGenDropdown ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", flexShrink: 0 }} />
               </button>
 
@@ -99,14 +149,14 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
                       <div style={{ padding: 16, textAlign: "center", color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO YEARS FOUND</div>
                     )}
                     {genOptions.map((opt) => {
-                      const selected = gen === opt.key;
+                      const selected = genId === opt.id;
                       return (
                         <button
-                          key={opt.key}
-                          onClick={() => { setGen(opt.key); setShowGenDropdown(false); setGenSearch(""); }}
+                          key={opt.id}
+                          onClick={() => { setGenId(opt.id); setShowGenDropdown(false); setGenSearch(""); }}
                           style={{ width: "100%", padding: "11px 16px", background: selected ? "#f0f0f0" : "transparent", border: "none", textAlign: "left", cursor: "pointer", fontSize: 14, color: COLORS.navy, fontWeight: selected ? 700 : 400, borderBottom: `1px solid ${COLORS.line}` }}
                         >
-                          {opt.label}
+                          {opt.name}
                         </button>
                       );
                     })}

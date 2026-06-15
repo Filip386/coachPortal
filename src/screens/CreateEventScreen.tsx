@@ -45,17 +45,11 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
   const [facilitiesError, setFacilitiesError] = useState<string | null>(null);
   const [loadingFacilities, setLoadingFacilities] = useState(false);
 
-  // Auto-populate the title from the selected event type + date until the
-  // coach edits it manually (mirrors how the model-driven app names events).
   const selectedTypeLabel = EVENT_TYPES.find((t) => t.code === typeCode)?.label ?? "Event";
   useEffect(() => {
     if (!titleEdited) setTitle(`${selectedTypeLabel} ${date}`);
   }, [selectedTypeLabel, date, titleEdited]);
 
-  // Full facility list comes from the Facility/Equipment table (via context).
-  // Fall back to facilities already referenced by existing events if the table
-  // hasn't loaded yet — the name there arrives as the OData formatted-value
-  // annotation, not axm365_facilityname.
   const facilities = useMemo(() => {
     if (allFacilities.length > 0) return allFacilities;
     const byId = new Map<string, string>();

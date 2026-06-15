@@ -7,11 +7,15 @@ import { Axm365_eventsService } from "../generated/services/Axm365_eventsService
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
 import { InvoicesService } from "../generated/services/InvoicesService";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
+import { Axm365_generationsService } from "../generated/services/Axm365_generationsService";
+import { Axm365_generationstocoachesesService } from "../generated/services/Axm365_generationstocoachesesService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
 import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
+import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
+import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_generationstocoachesesModel";
 import { unwrapOrThrow, fetchAllPages, fetchFacilities } from "../utils/dataverse";
 import type { Facility } from "../utils/dataverse";
 
@@ -23,6 +27,8 @@ interface DataContextValue {
   invoices: Invoices[];
   facilities: Facility[];
   performances: Axm365_playereventperformances[];
+  allGenerations: Axm365_generations[];
+  generationsToCoaches: Axm365_generationstocoacheses[];
   loading: boolean;
   error: string | null;
   refreshPlayers: () => Promise<void>;
@@ -31,6 +37,8 @@ interface DataContextValue {
   refreshInvoices: () => Promise<void>;
   refreshFacilities: () => Promise<void>;
   refreshPerformances: () => Promise<void>;
+  refreshGenerations: () => Promise<void>;
+  refreshGenerationsToCoaches: () => Promise<void>;
   refreshAll: () => Promise<void>;
 }
 
@@ -43,6 +51,8 @@ const CACHE = {
   invoices: "cvf_invoices",
   facilities: "cvf_facilities",
   performances: "cvf_performances",
+  generations: "cvf_generations",
+  generationsToCoaches: "cvf_generations_to_coaches",
 };
 
 function readCache<T>(key: string): T[] {
@@ -68,6 +78,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [invoices, setInvoices] = useState<Invoices[]>(() => readCache(CACHE.invoices));
   const [facilities, setFacilities] = useState<Facility[]>(() => readCache(CACHE.facilities));
   const [performances, setPerformances] = useState<Axm365_playereventperformances[]>(() => readCache(CACHE.performances));
+  const [allGenerations, setAllGenerations] = useState<Axm365_generations[]>(() => readCache(CACHE.generations));
+  const [generationsToCoaches, setGenerationsToCoaches] = useState<Axm365_generationstocoacheses[]>(() => readCache(CACHE.generationsToCoaches));
 
   // loading = true only on very first open (nothing in cache)
   const hasCache = readCache(CACHE.players).length > 0 || readCache(CACHE.events).length > 0;
@@ -119,9 +131,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     writeCache(CACHE.performances, data);
   }, []);
 
+  const refreshGenerations = useCallback(async () => {
+    const res = await Axm365_generationsService.getAll({ filter: "statecode eq 0" });
+    const data = unwrapOrThrow<Axm365_generations>(res);
+    setAllGenerations(data);
+    writeCache(CACHE.generations, data);
+  }, []);
+
+  const refreshGenerationsToCoaches = useCallback(async () => {
+    const res = await Axm365_generationstocoachesesService.getAll({ filter: "statecode eq 0" });
+    const data = unwrapOrThrow<Axm365_generationstocoacheses>(res);
+    setGenerationsToCoaches(data);
+    writeCache(CACHE.generationsToCoaches, data);
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshPlayers(), refreshEvents(), refreshAttendances(), refreshInvoices(), refreshFacilities(), refreshPerformances()]);
-  }, [refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances]);
+    await Promise.all([refreshPlayers(), refreshEvents(), refreshAttendances(), refreshInvoices(), refreshFacilities(), refreshPerformances(), refreshGenerations(), refreshGenerationsToCoaches()]);
+  }, [refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches]);
 
   useEffect(() => {
     setError(null);
@@ -137,14 +163,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));
 
-    // Attendances, facilities, performances load in background after primary data
+    // Attendances, facilities, performances, generations load in background after primary data
     refreshAttendances().catch(() => {});
     refreshFacilities().catch((err) => { console.error("[CoachPortal] Facilities load failed:", err); });
     refreshPerformances().catch(() => {});
+    refreshGenerations().catch(() => {});
+    refreshGenerationsToCoaches().catch(() => {});
   }, []);
 
   return (
-    <DataContext.Provider value={{ coachName, players, events, attendances, invoices, facilities, performances, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshAll }}>
+    <DataContext.Provider value={{ coachName, players, events, attendances, invoices, facilities, performances, allGenerations, generationsToCoaches, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches, refreshAll }}>
       {children}
     </DataContext.Provider>
   );

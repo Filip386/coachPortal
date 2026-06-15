@@ -6,8 +6,11 @@
 // Models
 export * as Axm365_eventattendancesModel from './models/Axm365_eventattendancesModel';
 export * as Axm365_eventsModel from './models/Axm365_eventsModel';
+export * as Axm365_generationsModel from './models/Axm365_generationsModel';
+export * as Axm365_generationstocoachesesModel from './models/Axm365_generationstocoachesesModel';
 export * as Axm365_playereventperformancesModel from './models/Axm365_playereventperformancesModel';
 export * as CommonModels from './models/CommonModels';
+export * as Cr9be_coachsModel from './models/Cr9be_coachsModel';
 export * as Cr9be_playersModel from './models/Cr9be_playersModel';
 export * as EquipmentsModel from './models/EquipmentsModel';
 export * as InvoicesModel from './models/InvoicesModel';
@@ -16,7 +19,10 @@ export * as MicrosoftDataverseModel from './models/MicrosoftDataverseModel';
 // Services
 export * from './services/Axm365_eventattendancesService';
 export * from './services/Axm365_eventsService';
+export * from './services/Axm365_generationsService';
+export * from './services/Axm365_generationstocoachesesService';
 export * from './services/Axm365_playereventperformancesService';
+export * from './services/Cr9be_coachsService';
 export * from './services/Cr9be_playersService';
 export * from './services/EquipmentsService';
 export * from './services/InvoicesService';

@@ -3543,6 +3543,13 @@ export const dataSourcesInfo = {
       }
     }
   },
+  "cr9be_coachs": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "cr9be_coachid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "axm365_eventattendances": {
     "tableId": "",
     "version": "",
@@ -3561,6 +3568,20 @@ export const dataSourcesInfo = {
     "tableId": "",
     "version": "",
     "primaryKey": "equipmentid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_generations": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_generationid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_generationstocoacheses": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_generationstocoachesid",
     "dataSourceType": "Dataverse",
     "apis": {}
   },
