@@ -9,6 +9,7 @@ import { InvoicesService } from "../generated/services/InvoicesService";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Axm365_generationsService } from "../generated/services/Axm365_generationsService";
 import { Axm365_generationstocoachesesService } from "../generated/services/Axm365_generationstocoachesesService";
+import { Cr9be_coachsService } from "../generated/services/Cr9be_coachsService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
@@ -16,11 +17,13 @@ import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
 import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_generationstocoachesesModel";
-import { unwrapOrThrow, fetchAllPages, fetchFacilities } from "../utils/dataverse";
+import { unwrapOrThrow, unwrap, fetchAllPages, fetchFacilities } from "../utils/dataverse";
 import type { Facility } from "../utils/dataverse";
+import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 
 interface DataContextValue {
   coachName: string | null;
+  coachId: string | null;
   players: Cr9be_players[];
   events: Axm365_events[];
   attendances: Axm365_eventattendances[];
@@ -72,6 +75,7 @@ function writeCache<T>(key: string, data: T[]) {
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [coachName, setCoachName] = useState<string | null>(null);
+  const [coachId, setCoachId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Cr9be_players[]>(() => readCache(CACHE.players));
   const [events, setEvents] = useState<Axm365_events[]>(() => readCache(CACHE.events));
   const [attendances, setAttendances] = useState<Axm365_eventattendances[]>(() => readCache(CACHE.attendances));
@@ -152,9 +156,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     setError(null);
 
-    // Fetch logged-in coach name from Power Apps context
-    getContext().then((ctx) => {
-      if (ctx.user.fullName) setCoachName(ctx.user.fullName);
+    // Fetch logged-in user info, then resolve their coach record by ID
+    getContext().then(async (ctx) => {
+      const fullName = ctx.user.fullName;
+      if (!fullName) return;
+      setCoachName(fullName);
+
+      // Load coaches and find the one whose contact name matches the logged-in user
+      try {
+        const res = await Cr9be_coachsService.getAll({ filter: "statecode eq 0" });
+        const coaches = unwrap<Cr9be_coachs>(res);
+        const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
+        const match = coaches.find(
+          (c) =>
+            norm(c.cr9be_contactname) === norm(fullName) ||
+            norm(`${c.cr9be_name ?? ""} ${c.cr9be_surname ?? ""}`.trim()) === norm(fullName) ||
+            norm(c.cr9be_name) === norm(fullName)
+        );
+        if (match) {
+          console.log("[CoachPortal] Matched coach:", match.cr9be_name, match.cr9be_coachid);
+          setCoachId(match.cr9be_coachid);
+        }
+      } catch {}
     }).catch(() => {});
 
     // Priority: players + events first (home screen needs them)
@@ -172,7 +195,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <DataContext.Provider value={{ coachName, players, events, attendances, invoices, facilities, performances, allGenerations, generationsToCoaches, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches, refreshAll }}>
+    <DataContext.Provider value={{ coachName, coachId, players, events, attendances, invoices, facilities, performances, allGenerations, generationsToCoaches, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches, refreshAll }}>
       {children}
     </DataContext.Provider>
   );

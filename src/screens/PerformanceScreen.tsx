@@ -18,35 +18,76 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, selectedPlayerId }) => {
-  const { players, performances, loading, error, refreshPlayers } = useData();
+  const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches } = useData();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
-  const [selectedGen, setSelectedGen] = useState("ALL");
+  const [selectedGenId, setSelectedGenId] = useState("all");
+  const [genAutoSelected, setGenAutoSelected] = useState(false);
   const [search, setSearch] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
+  const generationTabs = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+
+    const coachPlayers = coachId
+      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
+      : [];
+    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
+
+    sourcePlayers.forEach((p) => {
+      const id = (p as any)._cr9be_generation_value as string | undefined;
+      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
+      if (id && name && !seen.has(id)) {
+        seen.add(id);
+        result.push({ id, name });
+      }
+    });
+
+    generationsToCoaches
+      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
+      .forEach((gtc) => {
+        const id = (gtc as any)._axm365_generation_value as string | undefined;
+        const name = gtc.axm365_generationname;
+        if (id && name && !seen.has(id)) {
+          seen.add(id);
+          result.push({ id, name });
+        }
+      });
+
+    const yearOf = (s: string) => { const m = s.match(/\d{4}/) || s.match(/\d+/); return m ? parseInt(m[0], 10) : Infinity; };
+    return result.sort((a, b) => { const ya = yearOf(a.name), yb = yearOf(b.name); return ya !== yb ? ya - yb : a.name.localeCompare(b.name); });
+  }, [coachId, players, generationsToCoaches]);
+
+  const primaryGenId = useMemo(() => {
+    if (!coachId) return generationTabs[0]?.id ?? null;
+    const fromTable = allGenerations.find((g) => (g as any)._cr9be_coach_value === coachId);
+    return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
+  }, [coachId, allGenerations, generationTabs]);
+
+  useEffect(() => {
+    if (primaryGenId && !genAutoSelected) {
+      setSelectedGenId(primaryGenId);
+      setGenAutoSelected(true);
+      const first = players.filter((p) => (p as any)._cr9be_generation_value === primaryGenId)[0];
+      if (first) setSelectedId(first.cr9be_playerid);
+    }
+  }, [primaryGenId, genAutoSelected, players]);
+
   useEffect(() => {
     if (!selectedPlayerId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedId(selectedPlayerId);
     const p = players.find((pl) => pl.cr9be_playerid === selectedPlayerId);
-    const gen = lookupName(p, "cr9be_generation");
-    if (gen) setSelectedGen(gen);
+    const genId = (p as any)?._cr9be_generation_value as string | undefined;
+    if (genId) setSelectedGenId(genId);
   }, [selectedPlayerId, players]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!selectedId && players.length > 0) setSelectedId(players[0].cr9be_playerid);
   }, [players, selectedId]);
 
-  const generationTabs = useMemo(() => {
-    const yearOf = (s: string) => { const m = s.match(/\d{4}/) || s.match(/\d+/); return m ? parseInt(m[0], 10) : Infinity; };
-    return (Array.from(new Set(players.map((p) => lookupName(p, "cr9be_generation")).filter(Boolean))) as string[])
-      .sort((a, b) => { const ya = yearOf(a), yb = yearOf(b); return ya !== yb ? ya - yb : a.localeCompare(b); });
-  }, [players]);
-
   const playersInGen = useMemo(
-    () => selectedGen === "ALL" ? players : players.filter((p) => (lookupName(p, "cr9be_generation") ?? "") === selectedGen),
-    [players, selectedGen]
+    () => selectedGenId === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === selectedGenId),
+    [players, selectedGenId]
   );
 
   const filteredPlayers = search
@@ -88,20 +129,20 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, select
           {/* Generation filter */}
           {generationTabs.length > 0 && (
             <div style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
-              {["ALL", ...generationTabs].map((tab) => {
-                const active = selectedGen === tab;
+              {[{ id: "all", name: "ALL" }, ...generationTabs].map((tab) => {
+                const active = selectedGenId === tab.id;
                 return (
                   <button
-                    key={tab}
+                    key={tab.id}
                     ref={(el) => { if (active && el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" }); }}
                     onClick={() => {
-                      setSelectedGen(tab);
-                      const first = (tab === "ALL" ? players : players.filter((p) => (lookupName(p, "cr9be_generation") ?? "") === tab))[0];
+                      setSelectedGenId(tab.id);
+                      const first = (tab.id === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === tab.id))[0];
                       setSelectedId(first?.cr9be_playerid ?? null);
                     }}
                     style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: active ? `2px solid ${COLORS.yellow}` : `1px solid ${COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}
                   >
-                    {tab}
+                    {tab.name}
                   </button>
                 );
               })}

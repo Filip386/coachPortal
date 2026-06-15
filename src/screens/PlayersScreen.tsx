@@ -11,7 +11,7 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
-  const { players, performances, loading, error, refreshPlayers, coachName, allGenerations, generationsToCoaches } = useData();
+  const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches } = useData();
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
   const [genAutoSelected, setGenAutoSelected] = useState(false);
@@ -32,8 +32,8 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
     const seen = new Set<string>();
     const result: { id: string; name: string }[] = [];
 
-    const coachPlayers = coachName
-      ? players.filter((p) => p.cr9be_coachname === coachName)
+    const coachPlayers = coachId
+      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
       : [];
     const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
 
@@ -48,7 +48,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
 
     // Secondary generations from the junction table
     generationsToCoaches
-      .filter((gtc) => gtc.axm365_coachname === coachName)
+      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
       .forEach((gtc) => {
         const id = (gtc as any)._axm365_generation_value as string | undefined;
         const name = gtc.axm365_generationname;
@@ -66,14 +66,14 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
       const ya = yearOf(a.name), yb = yearOf(b.name);
       return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
     });
-  }, [coachName, players, generationsToCoaches]);
+  }, [coachId, players, generationsToCoaches]);
 
   // Primary generation: first from allGenerations table for this coach, fallback to first in list
   const primaryGenId = useMemo(() => {
-    if (!coachName) return null;
-    const fromTable = allGenerations.find((g) => g.cr9be_coachname === coachName);
+    if (!coachId) return generationTabs[0]?.id ?? null;
+    const fromTable = allGenerations.find((g) => (g as any)._cr9be_coach_value === coachId);
     return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
-  }, [coachName, allGenerations, generationTabs]);
+  }, [coachId, allGenerations, generationTabs]);
 
   useEffect(() => {
     if (primaryGenId && !genAutoSelected) {
