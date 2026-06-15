@@ -140,7 +140,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, select
                       const first = (tab.id === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === tab.id))[0];
                       setSelectedId(first?.cr9be_playerid ?? null);
                     }}
-                    style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: active ? `2px solid ${COLORS.yellow}` : `1px solid ${COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}
+                    style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: `1px solid ${active ? COLORS.navy : COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}
                   >
                     {tab.name}
                   </button>
