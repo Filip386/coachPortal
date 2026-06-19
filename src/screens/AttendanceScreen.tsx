@@ -54,9 +54,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
 
-  const { recentEvents, lastEvent } = useMemo(() => {
+  const { recentEvents, todayEvent } = useMemo(() => {
     const dated = events.filter((e) => e.axm365_eventdate);
     const now = new Date();
+    const todayStr = now.toDateString();
     const startYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
     const endToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
     const byDateDesc = (a: any, b: any) =>
@@ -67,9 +68,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         return t >= startYesterday && t <= endToday;
       })
       .sort(byDateDesc);
-    const past = dated.filter((e) => new Date(e.axm365_eventdate!).getTime() <= now.getTime()).sort(byDateDesc);
-    const last = recent[0] ?? past[0] ?? [...dated].sort(byDateDesc)[0] ?? events[0];
-    return { recentEvents: recent, lastEvent: last };
+    const today = dated.find((e) => new Date(e.axm365_eventdate!).toDateString() === todayStr) ?? null;
+    return { recentEvents: recent, todayEvent: today };
   }, [events]);
 
   // Build this coach's generation list from player records (reliable) + secondary junction table.
@@ -144,9 +144,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
 
   useEffect(() => {
     if (events.length > 0 && !selectedEventId && !initialEventId) {
-      setSelectedEventId(lastEvent?.axm365_eventid ?? events[0].axm365_eventid);
+      setSelectedEventId(todayEvent?.axm365_eventid ?? null);
     }
-  }, [events, lastEvent]);
+  }, [events, todayEvent]);
 
   useEffect(() => {
     const base: Record<string, AttendanceMark> = {};
@@ -368,7 +368,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
       {writeError && <ErrorBanner message={writeError} onRetry={saveAttendance} />}
       {saveSuccess && <SuccessBanner message="Attendance saved successfully!" />}
 
-      {(!loading || players.length > 0) && shownPlayers.length > 0 && (
+      {(!loading || players.length > 0) && shownPlayers.length > 0 && (selectedEventId || initialEventId) && (
         <div style={{ padding: "18px 16px 20px" }}>
           <div style={{ position: "relative", marginBottom: 12 }}>
             <Search size={14} color={COLORS.mute} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
@@ -450,7 +450,30 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         </div>
       )}
 
-      {!loading && shownPlayers.length === 0 && (
+      {!loading && !initialEventId && !todayEvent && events.length > 0 && (
+        <div style={{ padding: "48px 32px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <div style={{ width: 56, height: 56, borderRadius: 18, background: COLORS.yellowSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={COLORS.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy, marginBottom: 6 }}>No Event Today</div>
+            <div style={{ fontSize: 13, color: COLORS.mute, lineHeight: 1.5 }}>There is no event scheduled for today.<br />Please create an event first.</div>
+          </div>
+          <button
+            onClick={() => go("create")}
+            style={{ marginTop: 4, background: COLORS.navy, color: "#fff", border: 0, padding: "12px 28px", borderRadius: 14, fontSize: 13.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}
+          >
+            Create Event →
+          </button>
+        </div>
+      )}
+
+      {!loading && shownPlayers.length === 0 && (selectedEventId || initialEventId) && (
         <div style={{ padding: 40, textAlign: "center", color: COLORS.mute }}>
           {players.length === 0
             ? "No players found. Please add players to your squad first."
