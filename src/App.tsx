@@ -47,6 +47,11 @@ const App: React.FC = () => {
     // Tapping the tab you're already on isn't a real navigation — don't add a back-stack frame for it.
     if (id !== activeNav) {
       navStackRef.current.push({ id: activeNav, playerId: selectedPlayerId, eventId: selectedEventId });
+      // Mirror the in-app navigation onto browser history. On Android, Power Apps'
+      // host reads this like any web page: it calls the equivalent of history.back()
+      // when there's history to unwind, and only exits the app once there isn't —
+      // so this is what keeps the hardware/gesture back button inside the app.
+      window.history.pushState({ cvfNav: true }, "");
     }
     setActiveNav(id);
     if (playerId !== undefined) setSelectedPlayerId(playerId);
@@ -57,9 +62,11 @@ const App: React.FC = () => {
     else if (id === "attendance" || id === "performance") setSelectedEventId(null);
   };
 
-  // Returns to the screen (and its selected player/event) the user actually came from,
-  // instead of always dropping back to Home.
-  const goBack = () => {
+  // Actually pops the in-app back-stack. Only ever called from the popstate handler
+  // below, so the browser history depth (pushed in go()) and navStackRef depth never
+  // drift apart, regardless of whether "back" was triggered by hardware/gesture or
+  // the on-screen back arrow (see goBack()).
+  const performGoBack = () => {
     const prev = navStackRef.current.pop();
     if (!prev) {
       setActiveNav("home");
@@ -69,6 +76,20 @@ const App: React.FC = () => {
     setSelectedPlayerId(prev.playerId);
     setSelectedEventId(prev.eventId);
   };
+
+  // Passed to screens for their on-screen back arrow. It defers to the browser's own
+  // back navigation (which triggers the popstate handler below) instead of mutating
+  // state directly, so both the hardware back button and the in-app arrow go through
+  // the exact same path and stay in sync.
+  const goBack = () => {
+    window.history.back();
+  };
+
+  useEffect(() => {
+    const handlePopState = () => performGoBack();
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const renderScreen = () => {
     switch (activeNav) {
