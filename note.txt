@@ -1,3 +1,0 @@
-From Performance -> Edit -> Event da e optional vo edit mode - DONE
-Da ne displaynuva average - da displaynuva posledniot change - ama da ostanatiot proces da ostani ist da kreira celo vreme novi rekordi kako sto e sega za da imame historical data - DONE
-Performance ako se kliknit od event (toj sto se displaynuva na home screen deka doagja nareden ) avtomatski da se selektira toj event ako vlezi vo edit mode na performansi preku toj event->performance.
