@@ -56,11 +56,10 @@ const App: React.FC = () => {
     setActiveNav(id);
     if (playerId !== undefined) setSelectedPlayerId(playerId);
     if (eventId !== undefined) setSelectedEventId(eventId);
-    // Opening Attendance without an explicit event (footer / home quick action) →
-    // reset so no stale event carries over. The Calendar passes an eventId, which
-    // pins it. Performance no longer preselects an event at all — it always starts
-    // blank and the coach picks one manually if needed.
-    else if (id === "attendance") setSelectedEventId(null);
+    // Opening Attendance or Performance without an explicit event (footer / home
+    // quick action / My Squad) → reset so no stale event carries over. The Calendar
+    // and the home screen's "today" card pass an eventId, which pins it.
+    else if (id === "attendance" || id === "performance") setSelectedEventId(null);
   };
 
   // Actually pops the in-app back-stack. Only ever called from the popstate handler
@@ -96,7 +95,7 @@ const App: React.FC = () => {
     switch (activeNav) {
       case "home":        return <HomeScreen go={go} />;
       case "attendance":  return <AttendanceScreen go={go} goBack={goBack} initialEventId={selectedEventId} />;
-      case "performance": return <PerformanceScreen go={go} goBack={goBack} selectedPlayerId={selectedPlayerId} />;
+      case "performance": return <PerformanceScreen go={go} goBack={goBack} selectedPlayerId={selectedPlayerId} initialEventId={selectedEventId} />;
       case "invoices":    return <InvoicesScreen go={go} goBack={goBack} />;
       case "calendar":    return <CalendarScreen go={go} goBack={goBack} />;
       case "players":     return <PlayersScreen go={go} goBack={goBack} />;

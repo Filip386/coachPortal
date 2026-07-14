@@ -131,7 +131,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                 <button onClick={(e) => { e.stopPropagation(); go("attendance"); }} style={{ flex: 1, background: COLORS.navy, color: "#fff", border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
                   Mark Attendance
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); go("performance"); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
+                <button onClick={(e) => { e.stopPropagation(); go("performance", undefined, todayEvent?.axm365_eventid); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
                   Performance
                 </button>
               </div>

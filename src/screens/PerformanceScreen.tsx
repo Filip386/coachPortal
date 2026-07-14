@@ -26,9 +26,10 @@ interface PerformanceScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
   selectedPlayerId?: string | null;
+  initialEventId?: string | null;
 }
 
-export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId }) => {
+export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
   const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches } = useData();
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
@@ -176,9 +177,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     : sortedEvents;
 
   const openEditModal = () => {
-    // Edit Mode always starts without an event — the coach picks one (or leaves it
-    // unset) explicitly every time, and can remove it again via the clear button.
-    setEditEventId(null);
+    // Edit Mode preselects the event the coach arrived with (e.g. tapping
+    // "Performance" from an event on the Home screen). Otherwise it starts
+    // without an event, and the coach can always change or clear it manually.
+    setEditEventId(initialEventId ?? null);
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
     setEventPickerOpen(false);
