@@ -8,9 +8,10 @@ import { lookupName } from "../utils/dataverse";
 
 interface PlayersScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
+  goBack?: () => void;
 }
 
-export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
+export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches } = useData();
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
@@ -109,7 +110,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go }) => {
       <ScreenHeader
         kicker="Squad"
         title="My Players"
-        onBack={() => go("home")}
+        onBack={() => (goBack ? goBack() : go("home"))}
         action={
           <button
             onClick={refreshData}

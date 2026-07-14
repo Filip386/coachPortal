@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Smartphone, Maximize2 } from "lucide-react";
 import { PhoneFrameContext } from "./context/PhoneFrameContext";
 import { DataProvider } from "./context/DataContext";
@@ -26,32 +26,59 @@ const useIsMobile = () => {
   return isMobile;
 };
 
+interface NavSnapshot {
+  id: ScreenId;
+  playerId: string | null;
+  eventId: string | null;
+}
+
 const App: React.FC = () => {
   const [activeNav, setActiveNav] = useState<ScreenId>("home");
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // History stack of visited screens, used by goBack() — doesn't need to trigger
+  // re-renders on its own, so a ref is enough.
+  const navStackRef = useRef<NavSnapshot[]>([]);
   const [frameEl, setFrameEl] = useState<HTMLElement | null>(null);
   const [showFrame, setShowFrame] = useState(true);
   const isMobile = useIsMobile();
 
   const go = (id: ScreenId, playerId?: string, eventId?: string) => {
+    // Tapping the tab you're already on isn't a real navigation — don't add a back-stack frame for it.
+    if (id !== activeNav) {
+      navStackRef.current.push({ id: activeNav, playerId: selectedPlayerId, eventId: selectedEventId });
+    }
     setActiveNav(id);
     if (playerId !== undefined) setSelectedPlayerId(playerId);
     if (eventId !== undefined) setSelectedEventId(eventId);
-    // Opening Attendance without an explicit event (footer / home) → reset so it
-    // defaults to the last event. The Calendar passes an eventId, which pins it.
-    else if (id === "attendance") setSelectedEventId(null);
+    // Opening Attendance/Performance without an explicit event (footer / home
+    // quick action) → reset so no stale event carries over. The Calendar and the
+    // Home "today event" card pass an eventId, which pins it.
+    else if (id === "attendance" || id === "performance") setSelectedEventId(null);
+  };
+
+  // Returns to the screen (and its selected player/event) the user actually came from,
+  // instead of always dropping back to Home.
+  const goBack = () => {
+    const prev = navStackRef.current.pop();
+    if (!prev) {
+      setActiveNav("home");
+      return;
+    }
+    setActiveNav(prev.id);
+    setSelectedPlayerId(prev.playerId);
+    setSelectedEventId(prev.eventId);
   };
 
   const renderScreen = () => {
     switch (activeNav) {
       case "home":        return <HomeScreen go={go} />;
-      case "attendance":  return <AttendanceScreen go={go} initialEventId={selectedEventId} />;
-      case "performance": return <PerformanceScreen go={go} selectedPlayerId={selectedPlayerId} />;
-      case "invoices":    return <InvoicesScreen go={go} />;
-      case "calendar":    return <CalendarScreen go={go} />;
-      case "players":     return <PlayersScreen go={go} />;
-      case "create":      return <CreateEventScreen go={go} />;
+      case "attendance":  return <AttendanceScreen go={go} goBack={goBack} initialEventId={selectedEventId} />;
+      case "performance": return <PerformanceScreen go={go} goBack={goBack} selectedPlayerId={selectedPlayerId} initialEventId={selectedEventId} />;
+      case "invoices":    return <InvoicesScreen go={go} goBack={goBack} />;
+      case "calendar":    return <CalendarScreen go={go} goBack={goBack} />;
+      case "players":     return <PlayersScreen go={go} goBack={goBack} />;
+      case "create":      return <CreateEventScreen go={go} goBack={goBack} />;
       default:            return <HomeScreen go={go} />;
     }
   };

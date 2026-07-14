@@ -1,0 +1,55 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: CVF
+    - generic [ref=e6]:
+      - generic [ref=e7]: Villarreal · Masters
+      - generic [ref=e8]: Coach Portal
+  - button "Full screen" [ref=e9] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e23]:
+      - generic [ref=e269]:
+        - button [ref=e271] [cursor=pointer]
+        - generic [ref=e274]: Player Stats
+        - heading "Performance" [level=1] [ref=e276]
+      - generic [ref=e277]:
+        - button "ALL" [ref=e278] [cursor=pointer]
+        - button "2010" [ref=e279] [cursor=pointer]
+      - button "AR Alex Rivera" [ref=e281] [cursor=pointer]:
+        - generic [ref=e282]: AR
+        - generic [ref=e283]: Alex Rivera
+      - generic [ref=e287]:
+        - generic [ref=e289]:
+          - generic [ref=e290]: AR
+          - generic [ref=e291]:
+            - generic [ref=e292]: Alex Rivera
+            - generic [ref=e293]: "#9"
+          - generic [ref=e294]:
+            - generic [ref=e295]: "5.0"
+            - generic [ref=e296]: LATEST RATING
+            - generic [ref=e297]: "+1"
+        - generic [ref=e313]:
+          - generic [ref=e314]: 3 EVENTS
+          - button [ref=e316] [cursor=pointer]
+      - generic [ref=e320]:
+        - generic [ref=e321]:
+          - generic [ref=e322]: Latest Performance
+          - generic [ref=e323]: Attributes
+        - generic [ref=e324]:
+          - generic [ref=e326]:
+            - generic [ref=e327]: Technique
+            - generic [ref=e328]: "90"
+          - generic [ref=e332]:
+            - generic [ref=e333]: Effort
+            - generic [ref=e334]: "92"
+          - generic [ref=e338]:
+            - generic [ref=e339]: Tactical Awareness
+            - generic [ref=e340]: "88"
+          - generic [ref=e344]:
+            - generic [ref=e345]: Team Play
+            - generic [ref=e346]: "95"
+    - generic [ref=e131]:
+      - button "Home" [ref=e132] [cursor=pointer]
+      - button "Calendar" [ref=e138] [cursor=pointer]
+      - button "Attend" [ref=e142] [cursor=pointer]
+      - button "Squad" [ref=e148] [cursor=pointer]
+      - button "Fees" [ref=e155] [cursor=pointer]

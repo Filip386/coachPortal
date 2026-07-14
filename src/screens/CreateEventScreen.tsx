@@ -12,6 +12,7 @@ import { lookupName } from "../utils/dataverse";
 
 interface CreateEventScreenProps {
   go: (id: ScreenId) => void;
+  goBack?: () => void;
 }
 
 // Event types come straight from the Dataverse option set (4 values).
@@ -29,7 +30,7 @@ const EVENT_TYPES = Object.entries(Axm365_eventsaxm365_eventtype).map(([code, na
   icon: TYPE_ICONS[name] ?? Activity,
 }));
 
-export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
+export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack }) => {
   const { events, facilities: allFacilities, refreshEvents, refreshFacilities } = useData();
   const [typeCode, setTypeCode] = useState<number>(EVENT_TYPES[0]?.code ?? 216260000);
   const [title, setTitle] = useState("");
@@ -104,7 +105,7 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go }) => {
   return (
     <>
       <StatusBar />
-      <ScreenHeader kicker="New" title="Create Event" onBack={() => go("home")} />
+      <ScreenHeader kicker="New" title="Create Event" onBack={() => (goBack ? goBack() : go("home"))} />
 
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message="Event created successfully!" />}

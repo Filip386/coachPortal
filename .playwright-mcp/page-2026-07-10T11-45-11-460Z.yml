@@ -1,0 +1,48 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: CVF
+    - generic [ref=e6]:
+      - generic [ref=e7]: Villarreal · Masters
+      - generic [ref=e8]: Coach Portal
+  - button "Full screen" [ref=e9] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e23]:
+      - generic [ref=e186]:
+        - generic [ref=e189]:
+          - generic [ref=e190]:
+            - generic [ref=e191]: CVF
+            - generic [ref=e192]:
+              - generic [ref=e193]: VILLARREAL · MASTERS
+              - generic [ref=e194]: Coach Portal
+          - button [ref=e195] [cursor=pointer]
+        - generic [ref=e199]:
+          - generic [ref=e200]: FRI, JUL 10
+          - heading "Buenos días, Coach." [level=1] [ref=e201]: Buenos días,Coach.
+          - generic [ref=e202]: Loading stats…
+      - generic [ref=e203]:
+        - generic [ref=e204]:
+          - generic [ref=e205]: Shortcuts
+          - generic [ref=e206]: Quick Actions
+        - generic [ref=e207]:
+          - button "Create Event Schedule a session" [ref=e208] [cursor=pointer]:
+            - generic [ref=e211]:
+              - generic [ref=e212]: Create Event
+              - generic [ref=e213]: Schedule a session
+          - button "Performance Avg stats & ratings" [ref=e214] [cursor=pointer]:
+            - generic [ref=e219]:
+              - generic [ref=e220]: Performance
+              - generic [ref=e221]: Avg stats & ratings
+          - button "Invoices All clear" [ref=e222] [cursor=pointer]:
+            - generic [ref=e227]:
+              - generic [ref=e228]: Invoices
+              - generic [ref=e229]: All clear
+          - button "My Squad 0 players" [ref=e230] [cursor=pointer]:
+            - generic [ref=e237]:
+              - generic [ref=e238]: My Squad
+              - generic [ref=e239]: 0 players
+    - generic [ref=e79]:
+      - button "Home" [ref=e80] [cursor=pointer]
+      - button "Calendar" [ref=e86] [cursor=pointer]
+      - button "Attend" [ref=e90] [cursor=pointer]
+      - button "Squad" [ref=e96] [cursor=pointer]
+      - button "Fees" [ref=e103] [cursor=pointer]

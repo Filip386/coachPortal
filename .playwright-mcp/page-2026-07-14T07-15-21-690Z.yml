@@ -1,0 +1,55 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e4]:
+    - generic [ref=f1e5]: CVF
+    - generic [ref=f1e6]:
+      - generic [ref=f1e7]: Villarreal · Masters
+      - generic [ref=f1e8]: Coach Portal
+  - button "Full screen" [ref=f1e9] [cursor=pointer]
+  - generic [ref=f1e15]:
+    - generic [ref=f1e23]:
+      - generic [ref=f1e161]:
+        - button [ref=f1e163] [cursor=pointer]
+        - generic [ref=f1e166]: Player Stats
+        - heading "Performance" [level=1] [ref=f1e168]
+      - generic [ref=f1e169]:
+        - button "ALL" [ref=f1e170] [cursor=pointer]
+        - button "2010" [ref=f1e171] [cursor=pointer]
+      - button "AR Alex Rivera" [ref=f1e173] [cursor=pointer]:
+        - generic [ref=f1e174]: AR
+        - generic [ref=f1e175]: Alex Rivera
+      - generic [ref=f1e179]:
+        - generic [ref=f1e181]:
+          - generic [ref=f1e182]: AR
+          - generic [ref=f1e183]:
+            - generic [ref=f1e184]: Alex Rivera
+            - generic [ref=f1e185]: "#9"
+          - generic [ref=f1e186]:
+            - generic [ref=f1e187]: "5.0"
+            - generic [ref=f1e188]: LATEST RATING
+            - generic [ref=f1e189]: "+1"
+        - generic [ref=f1e205]:
+          - generic [ref=f1e206]: 3 EVENTS
+          - button [ref=f1e208] [cursor=pointer]
+      - generic [ref=f1e212]:
+        - generic [ref=f1e213]:
+          - generic [ref=f1e214]: Latest Performance
+          - generic [ref=f1e215]: Attributes
+        - generic [ref=f1e216]:
+          - generic [ref=f1e218]:
+            - generic [ref=f1e219]: Technique
+            - generic [ref=f1e220]: "90"
+          - generic [ref=f1e224]:
+            - generic [ref=f1e225]: Effort
+            - generic [ref=f1e226]: "92"
+          - generic [ref=f1e230]:
+            - generic [ref=f1e231]: Tactical Awareness
+            - generic [ref=f1e232]: "88"
+          - generic [ref=f1e236]:
+            - generic [ref=f1e237]: Team Play
+            - generic [ref=f1e238]: "95"
+    - generic [ref=f1e131]:
+      - button "Home" [ref=f1e132] [cursor=pointer]
+      - button "Calendar" [ref=f1e138] [cursor=pointer]
+      - button "Attend" [ref=f1e142] [cursor=pointer]
+      - button "Squad" [ref=f1e148] [cursor=pointer]
+      - button "Fees" [ref=f1e155] [cursor=pointer]

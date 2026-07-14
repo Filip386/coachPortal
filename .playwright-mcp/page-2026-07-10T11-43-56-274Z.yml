@@ -1,0 +1,48 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: CVF
+    - generic [ref=e6]:
+      - generic [ref=e7]: Villarreal · Masters
+      - generic [ref=e8]: Coach Portal
+  - button "Full screen" [ref=e9] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e27]:
+          - generic [ref=e28]:
+            - generic [ref=e29]: CVF
+            - generic [ref=e30]:
+              - generic [ref=e31]: VILLARREAL · MASTERS
+              - generic [ref=e32]: Coach Portal
+          - button [ref=e33] [cursor=pointer]
+        - generic [ref=e37]:
+          - generic [ref=e38]: FRI, JUL 10
+          - heading "Buenos días, Coach." [level=1] [ref=e39]: Buenos días,Coach.
+          - generic [ref=e40]: Loading stats…
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: Shortcuts
+          - generic [ref=e44]: Quick Actions
+        - generic [ref=e45]:
+          - button "Create Event Schedule a session" [ref=e46] [cursor=pointer]:
+            - generic [ref=e49]:
+              - generic [ref=e50]: Create Event
+              - generic [ref=e51]: Schedule a session
+          - button "Performance Avg stats & ratings" [ref=e52] [cursor=pointer]:
+            - generic [ref=e57]:
+              - generic [ref=e58]: Performance
+              - generic [ref=e59]: Avg stats & ratings
+          - button "Invoices All clear" [ref=e60] [cursor=pointer]:
+            - generic [ref=e65]:
+              - generic [ref=e66]: Invoices
+              - generic [ref=e67]: All clear
+          - button "My Squad 0 players" [ref=e68] [cursor=pointer]:
+            - generic [ref=e75]:
+              - generic [ref=e76]: My Squad
+              - generic [ref=e77]: 0 players
+    - generic [ref=e79]:
+      - button "Home" [ref=e80] [cursor=pointer]
+      - button "Calendar" [ref=e86] [cursor=pointer]
+      - button "Attend" [ref=e90] [cursor=pointer]
+      - button "Squad" [ref=e96] [cursor=pointer]
+      - button "Fees" [ref=e103] [cursor=pointer]

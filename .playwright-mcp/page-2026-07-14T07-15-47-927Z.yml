@@ -1,0 +1,103 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e4]:
+    - generic [ref=f1e5]: CVF
+    - generic [ref=f1e6]:
+      - generic [ref=f1e7]: Villarreal · Masters
+      - generic [ref=f1e8]: Coach Portal
+  - button "Full screen" [ref=f1e9] [cursor=pointer]
+  - generic [ref=f1e15]:
+    - generic [ref=f1e23]:
+      - generic [ref=f1e161]:
+        - button [ref=f1e163] [cursor=pointer]
+        - generic [ref=f1e166]: Player Stats
+        - heading "Performance" [level=1] [ref=f1e168]
+      - generic [ref=f1e169]:
+        - button "ALL" [ref=f1e170] [cursor=pointer]
+        - button "2010" [ref=f1e171] [cursor=pointer]
+      - button "AR Alex Rivera" [ref=f1e173] [cursor=pointer]:
+        - generic [ref=f1e174]: AR
+        - generic [ref=f1e175]: Alex Rivera
+      - generic [ref=f1e179]:
+        - generic [ref=f1e181]:
+          - generic [ref=f1e182]: AR
+          - generic [ref=f1e183]:
+            - generic [ref=f1e184]: Alex Rivera
+            - generic [ref=f1e185]: "#9"
+          - generic [ref=f1e186]:
+            - generic [ref=f1e187]: "5.0"
+            - generic [ref=f1e188]: LATEST RATING
+            - generic [ref=f1e189]: "+1"
+        - generic [ref=f1e205]:
+          - generic [ref=f1e206]: 3 EVENTS
+          - button [ref=f1e208] [cursor=pointer]
+      - generic [ref=f1e212]:
+        - generic [ref=f1e213]:
+          - generic [ref=f1e214]: Latest Performance
+          - generic [ref=f1e215]: Attributes
+        - generic [ref=f1e216]:
+          - generic [ref=f1e218]:
+            - generic [ref=f1e219]: Technique
+            - generic [ref=f1e220]: "90"
+          - generic [ref=f1e224]:
+            - generic [ref=f1e225]: Effort
+            - generic [ref=f1e226]: "92"
+          - generic [ref=f1e230]:
+            - generic [ref=f1e231]: Tactical Awareness
+            - generic [ref=f1e232]: "88"
+          - generic [ref=f1e236]:
+            - generic [ref=f1e237]: Team Play
+            - generic [ref=f1e238]: "95"
+    - generic [ref=f1e131]:
+      - button "Home" [ref=f1e132] [cursor=pointer]
+      - button "Calendar" [ref=f1e138] [cursor=pointer]
+      - button "Attend" [ref=f1e142] [cursor=pointer]
+      - button "Squad" [ref=f1e148] [cursor=pointer]
+      - button "Fees" [ref=f1e155] [cursor=pointer]
+    - generic [ref=f1e242]:
+      - generic [ref=f1e246]:
+        - generic [ref=f1e247]: AR
+        - generic [ref=f1e248]:
+          - generic [ref=f1e249]: Alex Rivera
+          - generic [ref=f1e250]: Training Session · Edit Performance
+        - button [ref=f1e251] [cursor=pointer]
+      - generic [ref=f1e255]:
+        - generic [ref=f1e256]:
+          - generic [ref=f1e257]: Event
+          - button "Training Session" [ref=f1e258] [cursor=pointer]
+        - generic [ref=f1e262]:
+          - generic [ref=f1e263]: Overall Rating
+          - generic [ref=f1e264]:
+            - button [ref=f1e265] [cursor=pointer]
+            - button [ref=f1e268] [cursor=pointer]
+            - button [ref=f1e271] [cursor=pointer]
+            - button [ref=f1e274] [cursor=pointer]
+            - button [ref=f1e277] [cursor=pointer]
+            - generic [ref=f1e280]: "5.0"
+          - generic [ref=f1e281]: Changing rating resets sliders · Sliders update rating automatically
+        - generic [ref=f1e282]:
+          - generic [ref=f1e283]: Attributes
+          - generic [ref=f1e284]:
+            - generic [ref=f1e285]:
+              - generic [ref=f1e286]:
+                - generic [ref=f1e287]: Technique
+                - generic [ref=f1e288]: "50"
+              - slider [active] [ref=f1e292] [cursor=pointer]: "50"
+            - generic [ref=f1e293]:
+              - generic [ref=f1e294]:
+                - generic [ref=f1e295]: Effort
+                - generic [ref=f1e296]: "92"
+              - slider [ref=f1e300] [cursor=pointer]: "92"
+            - generic [ref=f1e301]:
+              - generic [ref=f1e302]:
+                - generic [ref=f1e303]: Tactical Awareness
+                - generic [ref=f1e304]: "88"
+              - slider [ref=f1e308] [cursor=pointer]: "88"
+            - generic [ref=f1e309]:
+              - generic [ref=f1e310]:
+                - generic [ref=f1e311]: Team Play
+                - generic [ref=f1e312]: "95"
+              - slider [ref=f1e316] [cursor=pointer]: "95"
+        - generic [ref=f1e317]:
+          - generic [ref=f1e318]: Notes
+          - textbox "Notes for Alex Rivera…" [ref=f1e320]: Great session
+        - button "Save Performance →" [ref=f1e321] [cursor=pointer]

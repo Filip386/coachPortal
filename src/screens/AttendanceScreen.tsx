@@ -24,10 +24,11 @@ const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
 
 interface AttendanceScreenProps {
   go: (id: ScreenId) => void;
+  goBack?: () => void;
   initialEventId?: string | null;
 }
 
-export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialEventId }) => {
+export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, goBack, initialEventId }) => {
   const portalTarget = usePortalTarget();
   const { players, events, attendances, performances, coachName, coachId, loading, error, refreshAttendances, refreshPerformances, allGenerations, generationsToCoaches } = useData();
   const [saving, setSaving] = useState(false);
@@ -58,14 +59,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
     const dated = events.filter((e) => e.axm365_eventdate);
     const now = new Date();
     const todayStr = now.toDateString();
-    const startYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-    const endToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
+    // Event picker shows last week's events only — days -8 through -2, excluding
+    // today and yesterday (today's event is still auto-selected separately below).
+    const startLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 8).getTime();
+    const endLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime() - 1;
     const byDateDesc = (a: any, b: any) =>
       new Date(b.axm365_eventdate).getTime() - new Date(a.axm365_eventdate).getTime();
     const recent = dated
       .filter((e) => {
         const t = new Date(e.axm365_eventdate!).getTime();
-        return t >= startYesterday && t <= endToday;
+        return t >= startLastWeek && t <= endLastWeek;
       })
       .sort(byDateDesc);
     const today = dated.find((e) => new Date(e.axm365_eventdate!).toDateString() === todayStr) ?? null;
@@ -315,7 +318,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
         <div style={{ padding: "0 22px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <button
-              onClick={() => go("home")}
+              onClick={() => (goBack ? goBack() : go("home"))}
               style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(255,255,255,0.08)", border: `1px solid rgba(255,255,255,0.14)`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
             >
               <ChevronLeft size={18} color="#fff" strokeWidth={2} />
@@ -552,7 +555,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, initialE
               </div>
               <div style={{ padding: "8px 22px 14px", borderBottom: `1px solid ${COLORS.line}` }}>
                 <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 18, color: COLORS.navy }}>Choose Event</div>
-                <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.12em", color: COLORS.mute, marginTop: 4, textTransform: "uppercase" }}>Today &amp; yesterday</div>
+                <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.12em", color: COLORS.mute, marginTop: 4, textTransform: "uppercase" }}>Last week</div>
               </div>
               <div style={{ overflowY: "auto", padding: "10px 22px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {recentEvents.length === 0 && (

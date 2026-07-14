@@ -10,9 +10,10 @@ import { lookupName } from "../utils/dataverse";
 
 interface CalendarScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
+  goBack?: () => void;
 }
 
-export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go }) => {
+export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) => {
   const { events, loading, error, refreshEvents } = useData();
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
@@ -55,7 +56,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go }) => {
       <ScreenHeader
         kicker={monthName}
         title="Calendar"
-        onBack={() => go("home")}
+        onBack={() => (goBack ? goBack() : go("home"))}
         action={
           <div style={{ display: "flex", gap: 8 }}>
             <button

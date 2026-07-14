@@ -1,0 +1,20 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: CVF
+    - generic [ref=e6]:
+      - generic [ref=e7]: Villarreal · Masters
+      - generic [ref=e8]: Coach Portal
+  - button "Full screen" [ref=e9] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e23]:
+      - generic [ref=e243]:
+        - button [ref=e245] [cursor=pointer]
+        - generic [ref=e248]: Player Stats
+        - heading "Performance" [level=1] [ref=e250]
+      - generic [ref=e251]: LOADING PLAYERS…
+    - generic [ref=e79]:
+      - button "Home" [ref=e80] [cursor=pointer]
+      - button "Calendar" [ref=e86] [cursor=pointer]
+      - button "Attend" [ref=e90] [cursor=pointer]
+      - button "Squad" [ref=e96] [cursor=pointer]
+      - button "Fees" [ref=e103] [cursor=pointer]

@@ -1,0 +1,84 @@
+- generic [ref=f3e3]:
+  - generic [ref=f3e4]:
+    - generic [ref=f3e5]: CVF
+    - generic [ref=f3e6]:
+      - generic [ref=f3e7]: Villarreal · Masters
+      - generic [ref=f3e8]: Coach Portal
+  - button "Full screen" [ref=f3e9] [cursor=pointer]
+  - generic [ref=f3e15]:
+    - generic [ref=f3e23]:
+      - generic [ref=f3e24]:
+        - generic [ref=f3e27]:
+          - generic [ref=f3e28]:
+            - generic [ref=f3e29]: CVF
+            - generic [ref=f3e30]:
+              - generic [ref=f3e31]: VILLARREAL · MASTERS
+              - generic [ref=f3e32]: Coach Portal
+          - button [ref=f3e33] [cursor=pointer]
+        - generic [ref=f3e37]:
+          - generic [ref=f3e38]: TUE, JUL 14
+          - heading "Buenos días, Coach." [level=1] [ref=f3e39]: Buenos días,Coach.
+          - generic [ref=f3e40]:
+            - generic [ref=f3e41]:
+              - generic [ref=f3e42]: "1"
+              - generic [ref=f3e43]: Squad
+            - generic [ref=f3e45]:
+              - generic [ref=f3e46]: "2"
+              - generic [ref=f3e47]: Events
+            - generic [ref=f3e49]:
+              - generic [ref=f3e50]: "0"
+              - generic [ref=f3e51]: Overdue
+      - generic [ref=f3e53] [cursor=pointer]:
+        - generic [ref=f3e54]:
+          - generic [ref=f3e55]:
+            - generic [ref=f3e56]: Live · Today
+            - heading "Training Session" [level=3] [ref=f3e58]
+            - generic [ref=f3e59]:
+              - generic [ref=f3e60]: 06:00 PM
+              - generic [ref=f3e64]: Main Pitch
+          - generic [ref=f3e68]:
+            - generic [ref=f3e69]: "1"
+            - generic [ref=f3e70]: Players
+        - generic [ref=f3e71]:
+          - button "Mark Attendance" [ref=f3e72]
+          - button "Performance" [ref=f3e73]
+      - generic [ref=f3e74]:
+        - generic [ref=f3e75]:
+          - generic [ref=f3e76]: Shortcuts
+          - generic [ref=f3e77]: Quick Actions
+        - generic [ref=f3e78]:
+          - button "Create Event Schedule a session" [ref=f3e79] [cursor=pointer]:
+            - generic [ref=f3e82]:
+              - generic [ref=f3e83]: Create Event
+              - generic [ref=f3e84]: Schedule a session
+          - button "Performance Avg stats & ratings" [ref=f3e85] [cursor=pointer]:
+            - generic [ref=f3e90]:
+              - generic [ref=f3e91]: Performance
+              - generic [ref=f3e92]: Avg stats & ratings
+          - button "Invoices All clear" [ref=f3e93] [cursor=pointer]:
+            - generic [ref=f3e98]:
+              - generic [ref=f3e99]: Invoices
+              - generic [ref=f3e100]: All clear
+          - button "My Squad 1 players" [ref=f3e101] [cursor=pointer]:
+            - generic [ref=f3e108]:
+              - generic [ref=f3e109]: My Squad
+              - generic [ref=f3e110]: 1 players
+      - generic [ref=f3e111]:
+        - generic [ref=f3e112]:
+          - generic [ref=f3e113]:
+            - generic [ref=f3e114]: This Week
+            - generic [ref=f3e115]: Upcoming
+          - button "View all" [ref=f3e116] [cursor=pointer]
+        - generic [ref=f3e121] [cursor=pointer]:
+          - generic [ref=f3e122]:
+            - generic [ref=f3e123]: TUE
+            - generic [ref=f3e124]: "14"
+          - generic [ref=f3e125]:
+            - generic [ref=f3e126]: Training Session
+            - generic [ref=f3e127]: 06:00 PM
+    - generic [ref=f3e131]:
+      - button "Home" [ref=f3e132] [cursor=pointer]
+      - button "Calendar" [ref=f3e138] [cursor=pointer]
+      - button "Attend" [ref=f3e142] [cursor=pointer]
+      - button "Squad" [ref=f3e148] [cursor=pointer]
+      - button "Fees" [ref=f3e155] [cursor=pointer]

@@ -9,7 +9,7 @@ import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
 
 interface HomeScreenProps {
-  go: (id: ScreenId) => void;
+  go: (id: ScreenId, playerId?: string, eventId?: string) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
@@ -131,7 +131,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                 <button onClick={(e) => { e.stopPropagation(); go("attendance"); }} style={{ flex: 1, background: COLORS.navy, color: "#fff", border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
                   Mark Attendance
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); go("performance"); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
+                <button onClick={(e) => { e.stopPropagation(); go("performance", undefined, todayEvent.axm365_eventid); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
                   Performance
                 </button>
               </div>
@@ -144,7 +144,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         <SectionTitle eyebrow="Shortcuts" title="Quick Actions" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
           <ActionTile color={COLORS.navy} text="#fff" icon={Plus} title="Create Event" sub="Schedule a session" onClick={() => go("create")} />
-          <ActionTile color={COLORS.yellow} text={COLORS.navy} icon={TrendingUp} title="Performance" sub="Avg stats & ratings" onClick={() => go("performance")} />
+          <ActionTile color={COLORS.yellow} text={COLORS.navy} icon={TrendingUp} title="Performance" sub="Latest stats & ratings" onClick={() => go("performance")} />
           <ActionTile color="#fff" text={COLORS.navy} icon={CircleDollarSign} title="Invoices" sub={overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue` : "All clear"} onClick={() => go("invoices")} bordered />
           <ActionTile color="#fff" text={COLORS.navy} icon={Users} title="My Squad" sub={`${squadCount} players`} onClick={() => go("players")} bordered />
         </div>

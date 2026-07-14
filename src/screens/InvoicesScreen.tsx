@@ -11,6 +11,7 @@ import { lookupName } from "../utils/dataverse";
 
 interface InvoicesScreenProps {
   go: (id: ScreenId) => void;
+  goBack?: () => void;
 }
 
 const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
@@ -32,7 +33,7 @@ const invoiceContact = (inv: any): { key: string; name: string } => {
   return { key: id || `name:${norm(name)}`, name };
 };
 
-export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
+export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
   const { invoices, loading, error, refreshInvoices } = useData();
   const [selectedContactKey, setSelectedContactKey] = useState<string>("all");
   const [showContactDropdown, setShowContactDropdown] = useState(false);
@@ -102,7 +103,7 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go }) => {
       <ScreenHeader
         kicker="Current Cycle"
         title="Player Fees"
-        onBack={() => go("home")}
+        onBack={() => (goBack ? goBack() : go("home"))}
         action={
           <button
             onClick={refreshData}
