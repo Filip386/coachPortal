@@ -26,10 +26,9 @@ interface PerformanceScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
   selectedPlayerId?: string | null;
-  initialEventId?: string | null;
 }
 
-export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
+export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId }) => {
   const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches } = useData();
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
@@ -157,22 +156,29 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const latestTactical = latestPerf?.axm365_tacticalawareness ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
   const latestTeamPlay = latestPerf?.axm365_teamplay ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
 
-  const sortedEvents = useMemo(
-    () =>
-      [...events].sort(
-        (a, b) => new Date(b.axm365_eventdate ?? 0).getTime() - new Date(a.axm365_eventdate ?? 0).getTime()
-      ),
-    [events]
-  );
+  const sortedEvents = useMemo(() => {
+    const now = new Date();
+    // Event picker shows last week's events only — days -8 through -2, excluding
+    // today and yesterday. Mirrors the same window used in Mark Attendance.
+    const startLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 8).getTime();
+    const endLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime() - 1;
+    return events
+      .filter((e) => {
+        if (!e.axm365_eventdate) return false;
+        const t = new Date(e.axm365_eventdate).getTime();
+        return t >= startLastWeek && t <= endLastWeek;
+      })
+      .sort((a, b) => new Date(b.axm365_eventdate ?? 0).getTime() - new Date(a.axm365_eventdate ?? 0).getTime());
+  }, [events]);
 
   const filteredEvents = eventSearch
     ? sortedEvents.filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase()))
     : sortedEvents;
 
   const openEditModal = () => {
-    // Arriving from an Event on Home preselects that event; otherwise Event is left
-    // unset since it's now optional.
-    setEditEventId(initialEventId ?? null);
+    // Edit Mode always starts without an event — the coach picks one (or leaves it
+    // unset) explicitly every time, and can remove it again via the clear button.
+    setEditEventId(null);
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
     setEventPickerOpen(false);
@@ -471,15 +477,23 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
                     Event <span style={{ color: COLORS.mute, textTransform: "none", letterSpacing: 0, fontWeight: 500 }}></span>
                   </div>
-                  <button
+                  <div
                     onClick={() => setEventPickerOpen((v) => !v)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer", textAlign: "left" }}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer" }}
                   >
                     <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, color: editEventId ? COLORS.navy : COLORS.mute }}>
                       {editEventId ? (events.find((e) => e.axm365_eventid === editEventId)?.axm365_name || "Unnamed Event") : "Select event…"}
                     </span>
+                    {editEventId && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditEventId(null); }}
+                        style={{ width: 22, height: 22, borderRadius: 99, background: COLORS.line, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                      >
+                        <X size={12} color={COLORS.navy} strokeWidth={2.5} />
+                      </button>
+                    )}
                     <ChevronDown size={16} color={COLORS.mute} style={{ transform: eventPickerOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }} />
-                  </button>
+                  </div>
 
                   {eventPickerOpen && (
                     <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: 240 }}>
@@ -496,6 +510,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                         </div>
                       </div>
                       <div style={{ overflowY: "auto" }}>
+                        <button
+                          onClick={() => { setEditEventId(null); setEventPickerOpen(false); setEventSearch(""); }}
+                          style={{ width: "100%", padding: "10px 14px", background: !editEventId ? COLORS.yellowSoft : "transparent", border: "none", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${COLORS.line}`, textAlign: "left" }}
+                        >
+                          <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13, fontWeight: !editEventId ? 700 : 500, color: COLORS.mute, fontStyle: "italic" }}>
+                            No Event
+                          </span>
+                        </button>
                         {filteredEvents.length === 0 && (
                           <div style={{ padding: 16, textAlign: "center", color: COLORS.mute, fontFamily: monoStack, fontSize: 11, letterSpacing: "0.1em" }}>NO EVENTS FOUND</div>
                         )}
