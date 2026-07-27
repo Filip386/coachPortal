@@ -715,12 +715,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     pictureVersion={(player as any).cr9be_picture_timestamp}
                     initials={initials}
                     size={44}
-                    editable
-                    onUploaded={() => refreshPlayers().catch(() => {})}
                   />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
-                    <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>Edit Player · Tap photo to change</div>
+                    <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>Edit Player</div>
                   </div>
                   <button
                     onClick={() => setShowEditPlayerModal(false)}
@@ -742,6 +740,23 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     {playerSaveError}
                   </div>
                 )}
+
+                {/* Photo */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
+                    Photo
+                  </div>
+                  <PlayerAvatar
+                    playerId={player.cr9be_playerid}
+                    hasPicture={!!(player as any).cr9be_pictureid}
+                    pictureVersion={(player as any).cr9be_picture_timestamp}
+                    initials={initials}
+                    size={72}
+                    editable
+                    showActions
+                    onUploaded={() => refreshPlayers().catch(() => {})}
+                  />
+                </div>
 
                 {/* Jersey number */}
                 <div>

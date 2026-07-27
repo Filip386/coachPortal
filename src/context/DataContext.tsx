@@ -20,6 +20,7 @@ import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_g
 import { unwrapOrThrow, unwrap, fetchAllPages, fetchFacilities } from "../utils/dataverse";
 import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
+import { prefetchPlayerPhotos } from "../utils/photoCache";
 
 interface DataContextValue {
   coachName: string | null;
@@ -99,6 +100,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
     setPlayers(data);
     writeCache(CACHE.players, data);
+    // Fire-and-forget: warms the photo cache in the background so tapping into a
+    // player is a cache hit instead of the moment their photo's first download happens.
+    prefetchPlayerPhotos(
+      data.map((p) => ({
+        playerId: p.cr9be_playerid,
+        pictureId: p.cr9be_pictureid,
+        pictureVersion: p.cr9be_picture_timestamp,
+      }))
+    ).catch(() => {});
   }, []);
 
   const refreshEvents = useCallback(async () => {

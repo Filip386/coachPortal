@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Camera, RefreshCw } from "lucide-react";
-import { COLORS, displayStack } from "../../constants/design";
+import { Camera, Image as ImageIcon, RefreshCw, Trash2 } from "lucide-react";
+import { COLORS, displayStack, fontStack } from "../../constants/design";
 import { Cr9be_playersService } from "../../generated/services/Cr9be_playersService";
-import { compressImageToUnder1MB } from "../../utils/image";
+import { blobToDataUrl, compressImageToUnder1MB } from "../../utils/image";
+import { clearCachedPhoto, loadPlayerPhotoUrl, reloadThumbnailUrl } from "../../utils/photoCache";
 
 interface PlayerAvatarProps {
   playerId: string;
@@ -15,6 +16,9 @@ interface PlayerAvatarProps {
   pictureVersion?: number;
   /** Lets the coach tap the avatar to take/upload a photo. Off by default (e.g. in list rows). */
   editable?: boolean;
+  /** Renders explicit "Take Photo / Choose Photo / Remove Photo" rows below the avatar
+   *  instead of relying on tapping the avatar itself — used in the Edit Player modal. */
+  showActions?: boolean;
   onUploaded?: () => void;
 }
 
@@ -25,36 +29,61 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   size = 42,
   pictureVersion,
   editable = false,
+  showActions = false,
   onUploaded,
 }) => {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  // Guards the render-failure downgrade below to at most one retry per photo — without
+  // this, a thumbnail that also somehow fails to render would retrigger onError forever.
+  const thumbnailRetryTriedRef = useRef(false);
 
+  // imgUrl is always a `data:` URL. The player's CSP is `img-src 'self' data:`, so the
+  // `blob:` URLs from URL.createObjectURL() are blocked outright — see photoCache.
   useEffect(() => {
+    thumbnailRetryTriedRef.current = false;
     if (!hasPicture) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setImgUrl(null);
       return;
     }
     let cancelled = false;
-    let objectUrl: string | null = null;
-    // fullSize: true — the thumbnail rendition Dataverse generates is server-side
-    // center-cropped to a square, which is what was causing the "zoomed in" look
-    // no CSS objectFit could fix. Full size is cheap here since uploads are already
-    // compressed to under 1MB client-side.
-    Cr9be_playersService.downloadImage(playerId, "cr9be_picture", true)
-      .then((res) => {
-        if (cancelled || !res.success || !res.data || res.data.length === 0) return;
-        const blob = new Blob([res.data as BlobPart], { type: "image/jpeg" });
-        objectUrl = URL.createObjectURL(blob);
-        setImgUrl(objectUrl);
+
+    loadPlayerPhotoUrl(playerId, pictureVersion)
+      .then((url) => {
+        if (!cancelled && url) setImgUrl(url);
       })
-      .catch(() => {});
+      .catch((err) => console.error("[PlayerAvatar] unexpected error loading photo", playerId, err));
+
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [playerId, hasPicture, pictureVersion]);
+
+  // The image downloaded fine but the device couldn't decode/render it — happens on
+  // mobile for large pre-existing photos that were never compressed (desktop tolerates
+  // sizes phones choke on). Downgrade to the thumbnail, which is always small enough to
+  // render, and overwrite the cache with it so this device doesn't hit the same failure
+  // again next time.
+  const handleImageRenderError = () => {
+    setImgUrl(null);
+    if (thumbnailRetryTriedRef.current) return;
+    thumbnailRetryTriedRef.current = true;
+    // Drop the cached copy first — if what we just failed to render came from Cache
+    // Storage, leaving it there means every future launch re-renders the same broken
+    // image and never reaches the network to replace it.
+    clearCachedPhoto(playerId, pictureVersion)
+      .catch(() => {})
+      .then(() => reloadThumbnailUrl(playerId, pictureVersion))
+      .then((url) => {
+        if (url) setImgUrl(url);
+      })
+      .catch((err) => console.error("[PlayerAvatar] thumbnail downgrade after render failure also failed", playerId, err));
+  };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -64,18 +93,41 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
     try {
       const optimized = await compressImageToUnder1MB(file);
       const result = await Cr9be_playersService.upload(playerId, "cr9be_picture", optimized);
-      if (result.success) onUploaded?.();
+      if (result.success) {
+        // Show it immediately rather than waiting on the parent refresh + a re-download —
+        // the eventual pictureVersion update still runs the effect above, which reconciles
+        // this with the canonical cached copy in the background.
+        const preview = await blobToDataUrl(optimized);
+        if (preview) setImgUrl(preview);
+        onUploaded?.();
+      }
     } finally {
       setUploading(false);
     }
   };
 
+  const handleRemovePhoto = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRemoving(true);
+    try {
+      const result = await Cr9be_playersService.deleteFileOrImage(playerId, "cr9be_picture");
+      if (result.success) {
+        setImgUrl(null);
+        clearCachedPhoto(playerId, pictureVersion).catch(() => {});
+        onUploaded?.();
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const showImage = !!imgUrl;
   const radius = size > 48 ? 16 : 12;
+  const tapToEdit = editable && !showActions;
 
-  return (
+  const avatarCircle = (
     <div
-      onClick={editable ? () => inputRef.current?.click() : undefined}
+      onClick={tapToEdit ? () => inputRef.current?.click() : undefined}
       style={{
         width: size,
         height: size,
@@ -91,21 +143,21 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
         position: "relative",
         flexShrink: 0,
         overflow: "hidden",
-        cursor: editable ? "pointer" : "default",
+        cursor: tapToEdit ? "pointer" : "default",
       }}
     >
       {showImage ? (
         <img
           src={imgUrl}
           alt=""
-          onError={() => setImgUrl(null)}
+          onError={handleImageRenderError}
           style={{ width: "100%", height: "100%", objectFit: "contain" }}
         />
       ) : (
         initials
       )}
 
-      {editable && !showImage && (
+      {tapToEdit && !hasPicture && (
         <span
           style={{
             position: "absolute",
@@ -125,7 +177,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
         </span>
       )}
 
-      {uploading && (
+      {(uploading || removing) && (
         <div
           style={{
             position: "absolute",
@@ -140,17 +192,63 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
         </div>
       )}
 
-      {editable && (
+      {tapToEdit && (
         <input
           ref={inputRef}
           type="file"
           accept="image/*"
-          capture="environment"
           onClick={(e) => e.stopPropagation()}
           onChange={handleFileSelected}
           style={{ display: "none" }}
         />
       )}
+    </div>
+  );
+
+  if (!showActions) return avatarCircle;
+
+  const actionRowStyle: React.CSSProperties = {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "11px 14px",
+    background: COLORS.cream,
+    border: `1px solid ${COLORS.line}`,
+    borderRadius: 14,
+    fontFamily: fontStack,
+    fontSize: 13.5,
+    fontWeight: 700,
+    color: COLORS.navy,
+    cursor: uploading || removing ? "not-allowed" : "pointer",
+    opacity: uploading || removing ? 0.6 : 1,
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+      {avatarCircle}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+        <button disabled={uploading || removing} onClick={() => cameraInputRef.current?.click()} style={actionRowStyle}>
+          <Camera size={15} color={COLORS.navy} strokeWidth={2} />
+          Take Photo
+        </button>
+        <button disabled={uploading || removing} onClick={() => galleryInputRef.current?.click()} style={actionRowStyle}>
+          <ImageIcon size={15} color={COLORS.navy} strokeWidth={2} />
+          Choose Photo
+        </button>
+        {hasPicture && (
+          <button
+            disabled={uploading || removing}
+            onClick={handleRemovePhoto}
+            style={{ ...actionRowStyle, background: "#FEE2E2", border: "1px solid #FCA5A5", color: "#DC2626" }}
+          >
+            <Trash2 size={15} color="#DC2626" strokeWidth={2} />
+            Remove Photo
+          </button>
+        )}
+      </div>
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileSelected} style={{ display: "none" }} />
+      <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleFileSelected} style={{ display: "none" }} />
     </div>
   );
 };
