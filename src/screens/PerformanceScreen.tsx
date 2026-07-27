@@ -5,11 +5,12 @@ import { createPortal } from "react-dom";
 import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
 import { AttributeBar, AttributeSlider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
+import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
 import { lookupName } from "../utils/dataverse";
 
 const CODE_TO_STARS = (code?: number): number =>
@@ -52,6 +53,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [perfSaving, setPerfSaving] = useState(false);
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
+
+  // Player details edit modal (jersey number + position) — separate from the
+  // performance modal above since it edits the player record, not a performance entry.
+  const [showEditPlayerModal, setShowEditPlayerModal] = useState(false);
+  const [editPlayerNumber, setEditPlayerNumber] = useState("");
+  const [editPlayerPositionId, setEditPlayerPositionId] = useState<string | null>(null);
+  const [positionPickerOpen, setPositionPickerOpen] = useState(false);
+  const [playerSaving, setPlayerSaving] = useState(false);
+  const [playerSaveSuccess, setPlayerSaveSuccess] = useState(false);
+  const [playerSaveError, setPlayerSaveError] = useState<string | null>(null);
 
   const generationTabs = useMemo(() => {
     const seen = new Set<string>();
@@ -265,6 +276,65 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     }
   };
 
+  // Position choices derived from whatever positions already exist across the squad —
+  // there's no dedicated Position lookup wired into this app, same approach PlayersScreen uses.
+  const positionOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+    players.forEach((p) => {
+      const id = (p as any)._cr9be_position_value as string | undefined;
+      const name = lookupName(p, "cr9be_position");
+      if (id && name && !seen.has(id)) {
+        seen.add(id);
+        result.push({ id, name });
+      }
+    });
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }, [players]);
+
+  const openEditPlayerModal = () => {
+    if (!player) return;
+    setEditPlayerNumber(player.cr9be_number != null ? String(player.cr9be_number) : "");
+    setEditPlayerPositionId((player as any)._cr9be_position_value ?? null);
+    setPositionPickerOpen(false);
+    setPlayerSaveSuccess(false);
+    setPlayerSaveError(null);
+    setShowEditPlayerModal(true);
+  };
+
+  const savePlayerDetails = async () => {
+    if (!player) return;
+    setPlayerSaving(true);
+    setPlayerSaveError(null);
+    try {
+      const trimmed = editPlayerNumber.trim();
+      const changes: Record<string, unknown> = {};
+      if (trimmed === "") {
+        // Explicit null clears the field — omitting it entirely would just leave the old value in place.
+        changes.cr9be_number = null;
+      } else {
+        const numValue = Number(trimmed);
+        if (!Number.isInteger(numValue) || numValue < 0) {
+          throw new Error("Enter a valid jersey number");
+        }
+        changes.cr9be_number = numValue;
+      }
+      if (editPlayerPositionId) changes["cr9be_Position@odata.bind"] = `/cr9be_positions(${editPlayerPositionId})`;
+      const res = await Cr9be_playersService.update(player.cr9be_playerid, changes as any);
+      if (!res.success) throw new Error((res.error as any)?.message ?? "Update failed");
+      await refreshPlayers().catch(() => {});
+      setPlayerSaveSuccess(true);
+      setTimeout(() => {
+        setPlayerSaveSuccess(false);
+        setShowEditPlayerModal(false);
+      }, 1200);
+    } catch (err) {
+      setPlayerSaveError(err instanceof Error ? err.message : "Failed to update player");
+    } finally {
+      setPlayerSaving(false);
+    }
+  };
+
   return (
     <>
       <StatusBar />
@@ -305,9 +375,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer", textAlign: "left" }}
             >
               {player && (
-                <span style={{ width: 28, height: 28, borderRadius: 8, background: COLORS.navy, color: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, fontFamily: displayStack, flexShrink: 0 }}>
-                  {initials}
-                </span>
+                <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} initials={initials} size={28} />
               )}
               <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, color: COLORS.navy }}>
                 {player ? playerName : "Select player…"}
@@ -344,9 +412,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                         onClick={() => { setSelectedId(pid); setDropdownOpen(false); setSearch(""); }}
                         style={{ width: "100%", padding: "10px 14px", background: active ? COLORS.yellowSoft : "transparent", border: "none", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${COLORS.line}` }}
                       >
-                        <span style={{ width: 28, height: 28, borderRadius: 8, background: active ? COLORS.yellow : COLORS.cream, color: COLORS.navy, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, fontFamily: displayStack, flexShrink: 0 }}>
-                          {ini}
-                        </span>
+                        <PlayerAvatar playerId={pid} hasPicture={!!p.cr9be_pictureid} initials={ini} size={28} />
                         <span style={{ fontFamily: fontStack, fontSize: 13.5, fontWeight: active ? 700 : 500, color: COLORS.navy, textAlign: "left" }}>{name}</span>
                       </button>
                     );
@@ -361,12 +427,25 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 22, padding: 18, position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", top: -30, right: -30, width: 130, height: 130, background: COLORS.yellowSoft, borderRadius: "50%", opacity: 0.7 }} />
                 <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative" }}>
-                  <div style={{ width: 56, height: 56, borderRadius: 16, background: COLORS.navy, color: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 900, fontSize: 22 }}>
-                    {initials}
-                  </div>
+                  <PlayerAvatar
+                    playerId={player.cr9be_playerid}
+                    hasPicture={!!(player as any).cr9be_pictureid}
+                    initials={initials}
+                    size={56}
+                    editable
+                    onUploaded={() => refreshPlayers().catch(() => {})}
+                  />
                   <div>
                     <div style={{ fontFamily: displayStack, fontSize: 19, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>{playerName}</div>
-                    <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em", marginTop: 2 }}>{playerPos ? `${playerPos} · ` : ""}#{playerNum}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em" }}>{playerPos ? `${playerPos} · ` : ""}#{playerNum}</div>
+                      <button
+                        onClick={openEditPlayerModal}
+                        style={{ width: 19, height: 19, borderRadius: 6, background: COLORS.cream, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                      >
+                        <Pencil size={9.5} color={COLORS.navy} strokeWidth={2} />
+                      </button>
+                    </div>
                   </div>
                   <div style={{ marginLeft: "auto", position: "relative", textAlign: "right" }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 900, fontSize: 32, color: COLORS.navy, lineHeight: 1 }}>{latestRatingStars}.0</div>
@@ -443,9 +522,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               {/* Header */}
               <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: COLORS.navy, color: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 900, fontSize: 16 }}>
-                    {initials}
-                  </div>
+                  <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} initials={initials} size={44} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>
@@ -606,6 +683,135 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                 >
                   {perfSaving && <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />}
                   {perfSaving ? "Saving…" : "Save Performance →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+        return portalTarget ? createPortal(modal, portalTarget) : modal;
+      })()}
+
+      {/* Player details edit modal — jersey number + position */}
+      {showEditPlayerModal && player && (() => {
+        const modal = (
+          <div
+            style={{ position: portalTarget ? "absolute" : "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-end" }}
+            onClick={() => !playerSaving && setShowEditPlayerModal(false)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
+              </div>
+
+              <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <PlayerAvatar
+                    playerId={player.cr9be_playerid}
+                    hasPicture={!!(player as any).cr9be_pictureid}
+                    initials={initials}
+                    size={44}
+                    editable
+                    onUploaded={() => refreshPlayers().catch(() => {})}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
+                    <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>Edit Player · Tap photo to change</div>
+                  </div>
+                  <button
+                    onClick={() => setShowEditPlayerModal(false)}
+                    style={{ width: 32, height: 32, borderRadius: 99, background: COLORS.cream, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                  >
+                    <X size={14} color={COLORS.navy} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ overflowY: "auto", padding: "16px 22px 30px", display: "flex", flexDirection: "column", gap: 20 }}>
+                {playerSaveSuccess && (
+                  <div style={{ background: COLORS.green, color: "#fff", borderRadius: 12, padding: "10px 14px", textAlign: "center", fontWeight: 600, fontSize: 13 }}>
+                    Player updated!
+                  </div>
+                )}
+                {playerSaveError && (
+                  <div style={{ background: "#FEE2E2", color: "#DC2626", borderRadius: 12, padding: "10px 14px", fontSize: 12 }}>
+                    {playerSaveError}
+                  </div>
+                )}
+
+                {/* Jersey number */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
+                    Jersey Number
+                  </div>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      value={editPlayerNumber}
+                      onChange={(e) => setEditPlayerNumber(e.target.value)}
+                      placeholder="e.g. 9"
+                      style={{ width: "100%", padding: "11px 36px 11px 14px", background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, fontFamily: fontStack, fontSize: 14, fontWeight: 700, color: COLORS.navy, outline: "none", boxSizing: "border-box" }}
+                    />
+                    {editPlayerNumber.length > 0 && (
+                      <button
+                        onClick={() => setEditPlayerNumber("")}
+                        title="Remove number"
+                        style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: 99, background: COLORS.line, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                      >
+                        <X size={12} color={COLORS.navy} strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Position */}
+                <div>
+                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
+                    Position
+                  </div>
+                  <div
+                    onClick={() => setPositionPickerOpen((v) => !v)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer" }}
+                  >
+                    <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, color: editPlayerPositionId ? COLORS.navy : COLORS.mute }}>
+                      {editPlayerPositionId ? (positionOptions.find((o) => o.id === editPlayerPositionId)?.name ?? "Unknown") : "Select position…"}
+                    </span>
+                    <ChevronDown size={16} color={COLORS.mute} style={{ transform: positionPickerOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }} />
+                  </div>
+
+                  {positionPickerOpen && (
+                    <div style={{ marginTop: 8, background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, overflow: "hidden", display: "flex", flexDirection: "column", maxHeight: 200, overflowY: "auto" }}>
+                      {positionOptions.length === 0 && (
+                        <div style={{ padding: 16, textAlign: "center", color: COLORS.mute, fontFamily: monoStack, fontSize: 11, letterSpacing: "0.1em" }}>NO POSITIONS FOUND</div>
+                      )}
+                      {positionOptions.map((opt) => {
+                        const active = editPlayerPositionId === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => { setEditPlayerPositionId(opt.id); setPositionPickerOpen(false); }}
+                            style={{ width: "100%", padding: "10px 14px", background: active ? COLORS.yellowSoft : "transparent", border: "none", textAlign: "left", cursor: "pointer", fontSize: 13.5, color: COLORS.navy, fontWeight: active ? 700 : 500, borderBottom: `1px solid ${COLORS.line}` }}
+                          >
+                            {opt.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Save button */}
+                <button
+                  disabled={playerSaving}
+                  onClick={savePlayerDetails}
+                  style={{ width: "100%", padding: "14px 0", background: playerSaving ? COLORS.mute : COLORS.navy, color: "#fff", border: 0, borderRadius: 14, fontSize: 14, fontWeight: 700, cursor: playerSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {playerSaving && <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} />}
+                  {playerSaving ? "Saving…" : "Save Player →"}
                 </button>
               </div>
             </div>

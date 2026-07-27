@@ -96,6 +96,7 @@ export const Invoicesstatuscode = {
 export type Invoicesstatuscode = keyof typeof Invoicesstatuscode;
 
 export interface InvoicesBase {
+  "axm365_account_recurring_billing_@odata.bind"?: string;
   axm365_billingperiodend?: string;
   axm365_billingperiodstart?: string;
   axm365_generation_key?: string;
@@ -169,6 +170,7 @@ export interface InvoicesBase {
 export interface Invoices extends InvoicesBase {
   accountidname?: string;
   accountidyominame?: string;
+  axm365_account_recurring_billing_name?: string;
   billto_composite?: string;
   contactidname?: string;
   contactidyominame?: string;
@@ -220,6 +222,8 @@ export interface Invoices extends InvoicesBase {
   willcallname?: string;
   accountid?: object;
   _accountid_value?: string;
+  axm365_account_recurring_billing_?: object;
+  _axm365_account_recurring_billing__value?: string;
   contactid?: object;
   _contactid_value?: string;
   createdby?: object;

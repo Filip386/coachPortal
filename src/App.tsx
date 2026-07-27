@@ -200,7 +200,7 @@ const App: React.FC = () => {
             Villarreal · Masters
           </div>
           <div style={{ color: "rgba(255,255,255,0.85)", fontFamily: fontStack, fontSize: 13, fontWeight: 700, marginTop: 1 }}>
-            Coach Portal
+            Coach App
           </div>
         </div>
       </div>

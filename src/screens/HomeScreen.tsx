@@ -50,7 +50,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             </div>
             <div style={{ lineHeight: 1.1 }}>
               <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.2em", opacity: 0.7 }}>VILLARREAL · MASTERS</div>
-              <div style={{ fontWeight: 700, fontSize: 13 }}>Coach Portal</div>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>Coach App</div>
             </div>
           </div>
           <button

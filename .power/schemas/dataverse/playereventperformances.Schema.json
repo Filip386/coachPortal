@@ -55,7 +55,7 @@
           "x-ms-dataverse-attribute": "axm365_notes",
           "x-ms-dataverse-type": "MemoType",
           "x-ms-schema-name": "axm365_Notes",
-          "maxLength": 100
+          "maxLength": 1000
         },
         "axm365_performancename": {
           "type": "string",
@@ -103,7 +103,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "ff416ce7-015a-4bd9-b796-7fc53fb51df8",
+          "x-ms-optionsetmetadataid": "6cf30bb8-c068-f111-ab0d-7c1e52fb60e4",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Raiting",
           "x-ms-optionSetType": "Picklist"
@@ -364,7 +364,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "f3993d73-21e5-4c85-90ee-47256c6e4492",
+          "x-ms-optionsetmetadataid": "1df30bb8-c068-f111-ab0d-7c1e52fb60e4",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status",
           "x-ms-optionSetType": "State"
@@ -395,7 +395,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "14b8ec6f-6ec5-42b0-82b6-f15f9d129790",
+          "x-ms-optionsetmetadataid": "27f30bb8-c068-f111-ab0d-7c1e52fb60e4",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status Reason",
           "x-ms-optionSetType": "Status"

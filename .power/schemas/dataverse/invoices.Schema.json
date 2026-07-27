@@ -36,6 +36,22 @@
           "x-ms-read-only": true,
           "maxLength": 100
         },
+        "axm365_account_recurring_billing_": {
+          "type": "string",
+          "title": "Account Recurring Billing Setup",
+          "x-ms-dataverse-attribute": "axm365_account_recurring_billing_",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "axm365_account_recurring_billing_"
+        },
+        "axm365_account_recurring_billing_name": {
+          "type": "string",
+          "title": "axm365_account_recurring_billing_name",
+          "x-ms-dataverse-attribute": "axm365_account_recurring_billing_name",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "axm365_account_recurring_billing_Name",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
         "axm365_billingperiodend": {
           "type": "string",
           "title": "Billing Period End",

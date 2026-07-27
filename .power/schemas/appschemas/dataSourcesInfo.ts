@@ -893,7 +893,8 @@ export const dataSourcesInfo = {
             "name": "$top",
             "in": "query",
             "required": false,
-            "type": "integer"
+            "type": "integer",
+            "format": "int32"
           },
           {
             "name": "$skiptoken",
@@ -1047,7 +1048,8 @@ export const dataSourcesInfo = {
             "name": "$top",
             "in": "query",
             "required": false,
-            "type": "integer"
+            "type": "integer",
+            "format": "int32"
           },
           {
             "name": "$skiptoken",
@@ -2628,7 +2630,8 @@ export const dataSourcesInfo = {
             "name": "item",
             "in": "body",
             "required": true,
-            "type": "object"
+            "type": "string",
+            "format": "binary"
           },
           {
             "name": "x-ms-file-name",
@@ -2690,7 +2693,8 @@ export const dataSourcesInfo = {
             "name": "item",
             "in": "body",
             "required": true,
-            "type": "object"
+            "type": "string",
+            "format": "binary"
           },
           {
             "name": "x-ms-file-name",

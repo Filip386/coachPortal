@@ -7,7 +7,7 @@ import { Axm365_eventattendancesService } from "../generated/services/Axm365_eve
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
 import { Tally, MarkBtn, SuccessBanner, AttributeSlider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
@@ -415,8 +415,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, goBack, 
                     onClick={() => setPerfEditPlayerId(playerId)}
                     style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}
                   >
-                    <div style={{ width: 42, height: 42, borderRadius: 12, background: COLORS.navy, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 800, fontSize: 13, position: "relative", flexShrink: 0 }}>
-                      {initials}
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} initials={initials} size={42} />
                       <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
                         {num}
                       </span>
@@ -622,9 +622,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, goBack, 
               {/* Header */}
               <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: COLORS.navy, color: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 900, fontSize: 16 }}>
-                    {(perfEditPlayer?.cr9be_name || "P").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                  </div>
+                  {perfEditPlayer && (
+                    <PlayerAvatar
+                      playerId={perfEditPlayer.cr9be_playerid}
+                      hasPicture={!!perfEditPlayer.cr9be_pictureid}
+                      initials={(perfEditPlayer.cr9be_name || "P").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                      size={44}
+                    />
+                  )}
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{perfEditPlayer?.cr9be_name || "Player"}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>

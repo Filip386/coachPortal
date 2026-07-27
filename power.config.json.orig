@@ -1,16 +1,24 @@
 {
   "version": "1.0",
-  "appId": "c1a9863f-8d99-4eaa-910b-2cd813902c39",
-  "appDisplayName": "Coach App",
+  "appId": "233ef803-35af-4590-ac55-5679f6e3819f",
+  "appDisplayName": "Coach Portal Code App",
   "region": "prod",
-  "appType": "CodeApp",
   "environmentId": "3f82e4f3-c7ef-ee18-9d6e-bf3520b90558",
   "description": " ",
   "buildPath": "./dist",
   "buildEntryPoint": "index.html",
   "localAppUrl": "http://localhost:3000",
   "logoPath": "Default",
-  "connectionReferences": {},
+  "connectionReferences": {
+    "000d44e1-d341-4825-9092-430a4f0a44b4": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
+      "displayName": "Microsoft Dataverse",
+      "dataSources": [
+        "commondataserviceforapps"
+      ],
+      "dataSets": {}
+    }
+  },
   "databaseReferences": {
     "default.cds": {
       "dataSources": {
@@ -46,18 +54,15 @@
         },
         "coaches": {
           "entitySetName": "cr9be_coachs",
-          "logicalName": "cr9be_coach",
-          "isHidden": false
+          "logicalName": "cr9be_coach"
         },
         "generationstocoaches": {
           "entitySetName": "axm365_generationstocoacheses",
-          "logicalName": "axm365_generationstocoaches",
-          "isHidden": false
+          "logicalName": "axm365_generationstocoaches"
         },
         "generations": {
           "entitySetName": "axm365_generations",
-          "logicalName": "axm365_generation",
-          "isHidden": false
+          "logicalName": "axm365_generation"
         }
       },
       "environmentVariableName": ""

@@ -77,4 +77,6 @@ export interface Cr9be_coachs extends Cr9be_coachsBase {
   owninguser?: object;
   _owninguser_value?: string;
 }
-export type Cr9be_coachsUploadColumnName = 'cr9be_picture';
+export type Cr9be_coachsImageColumnName = 'cr9be_picture';
+
+export type Cr9be_coachsUploadColumnName = Cr9be_coachsImageColumnName;
