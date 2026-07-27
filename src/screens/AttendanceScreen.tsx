@@ -416,7 +416,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, goBack, 
                     style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}
                   >
                     <div style={{ position: "relative", flexShrink: 0 }}>
-                      <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} initials={initials} size={42} />
+                      <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={initials} size={42} />
                       <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
                         {num}
                       </span>
@@ -626,6 +626,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({ go, goBack, 
                     <PlayerAvatar
                       playerId={perfEditPlayer.cr9be_playerid}
                       hasPicture={!!perfEditPlayer.cr9be_pictureid}
+                      pictureVersion={perfEditPlayer.cr9be_picture_timestamp}
                       initials={(perfEditPlayer.cr9be_name || "P").split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
                       size={44}
                     />

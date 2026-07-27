@@ -9,6 +9,10 @@ interface PlayerAvatarProps {
   hasPicture: boolean;
   initials: string;
   size?: number;
+  /** Dataverse's cr9be_picture_timestamp — changes every time the image column is
+   *  written, so it's included in the fetch effect to bust the cache on a replace
+   *  (hasPicture alone stays `true` across a re-upload and would never re-trigger it). */
+  pictureVersion?: number;
   /** Lets the coach tap the avatar to take/upload a photo. Off by default (e.g. in list rows). */
   editable?: boolean;
   onUploaded?: () => void;
@@ -19,6 +23,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
   hasPicture,
   initials,
   size = 42,
+  pictureVersion,
   editable = false,
   onUploaded,
 }) => {
@@ -39,7 +44,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
     // compressed to under 1MB client-side.
     Cr9be_playersService.downloadImage(playerId, "cr9be_picture", true)
       .then((res) => {
-        if (cancelled || !res.success || !res.data) return;
+        if (cancelled || !res.success || !res.data || res.data.length === 0) return;
         const blob = new Blob([res.data as BlobPart], { type: "image/jpeg" });
         objectUrl = URL.createObjectURL(blob);
         setImgUrl(objectUrl);
@@ -49,7 +54,7 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [playerId, hasPicture]);
+  }, [playerId, hasPicture, pictureVersion]);
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -90,7 +95,12 @@ export const PlayerAvatar: React.FC<PlayerAvatarProps> = ({
       }}
     >
       {showImage ? (
-        <img src={imgUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        <img
+          src={imgUrl}
+          alt=""
+          onError={() => setImgUrl(null)}
+          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+        />
       ) : (
         initials
       )}

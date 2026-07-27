@@ -234,7 +234,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
                 style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 16, padding: 12, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} initials={initials} size={42} />
+                  <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={initials} size={42} />
                   <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
                     {num}
                   </span>

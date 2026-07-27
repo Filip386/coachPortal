@@ -375,7 +375,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer", textAlign: "left" }}
             >
               {player && (
-                <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} initials={initials} size={28} />
+                <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} pictureVersion={(player as any).cr9be_picture_timestamp} initials={initials} size={28} />
               )}
               <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, color: COLORS.navy }}>
                 {player ? playerName : "Select player…"}
@@ -412,7 +412,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                         onClick={() => { setSelectedId(pid); setDropdownOpen(false); setSearch(""); }}
                         style={{ width: "100%", padding: "10px 14px", background: active ? COLORS.yellowSoft : "transparent", border: "none", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${COLORS.line}` }}
                       >
-                        <PlayerAvatar playerId={pid} hasPicture={!!p.cr9be_pictureid} initials={ini} size={28} />
+                        <PlayerAvatar playerId={pid} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={ini} size={28} />
                         <span style={{ fontFamily: fontStack, fontSize: 13.5, fontWeight: active ? 700 : 500, color: COLORS.navy, textAlign: "left" }}>{name}</span>
                       </button>
                     );
@@ -430,6 +430,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   <PlayerAvatar
                     playerId={player.cr9be_playerid}
                     hasPicture={!!(player as any).cr9be_pictureid}
+                    pictureVersion={(player as any).cr9be_picture_timestamp}
                     initials={initials}
                     size={56}
                     editable
@@ -522,7 +523,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               {/* Header */}
               <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} initials={initials} size={44} />
+                  <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} pictureVersion={(player as any).cr9be_picture_timestamp} initials={initials} size={44} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>
@@ -711,6 +712,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   <PlayerAvatar
                     playerId={player.cr9be_playerid}
                     hasPicture={!!(player as any).cr9be_pictureid}
+                    pictureVersion={(player as any).cr9be_picture_timestamp}
                     initials={initials}
                     size={44}
                     editable
