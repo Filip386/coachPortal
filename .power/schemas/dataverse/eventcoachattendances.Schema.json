@@ -1,190 +1,88 @@
 {
-  "name": "cr9be_coach",
-  "title": "Coaches",
+  "name": "axm365_eventcoachattendance",
+  "title": "Event Coach Attendances",
   "schema": {
     "type": "array",
     "items": {
       "type": "object",
       "x-ms-dataverse-entity": true,
-      "x-ms-dataverse-entityset": "cr9be_coachs",
-      "x-ms-dataverse-primary-id": "cr9be_coachid",
-      "x-ms-dataverse-primary-name": "cr9be_name",
+      "x-ms-dataverse-entityset": "axm365_eventcoachattendances",
+      "x-ms-dataverse-primary-id": "axm365_eventcoachattendanceid",
+      "x-ms-dataverse-primary-name": "axm365_name",
       "properties": {
-        "axm365_bio": {
+        "axm365_clockin": {
           "type": "string",
-          "title": "Bio",
-          "x-ms-dataverse-attribute": "axm365_bio",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "axm365_Bio",
-          "maxLength": 100
-        },
-        "axm365_dateofbirth": {
-          "type": "string",
-          "title": "Date of Birth",
-          "x-ms-dataverse-attribute": "axm365_dateofbirth",
+          "title": "Clock In",
+          "x-ms-dataverse-attribute": "axm365_clockin",
           "x-ms-dataverse-type": "DateTimeType",
-          "x-ms-schema-name": "axm365_Dateofbirth"
+          "x-ms-schema-name": "axm365_ClockIn"
         },
-        "axm365_employmentdate": {
+        "axm365_clockout": {
           "type": "string",
-          "title": "Employment date",
-          "x-ms-dataverse-attribute": "axm365_employmentdate",
+          "title": "Clock Out",
+          "x-ms-dataverse-attribute": "axm365_clockout",
           "x-ms-dataverse-type": "DateTimeType",
-          "x-ms-schema-name": "axm365_Employmentdate"
+          "x-ms-schema-name": "axm365_ClockOut"
         },
-        "axm365_experience": {
-          "type": "string",
-          "title": "Experience ",
-          "x-ms-dataverse-attribute": "axm365_experience",
-          "x-ms-dataverse-type": "DecimalType",
-          "x-ms-schema-name": "axm365_Experience"
-        },
-        "axm365_experienceyears": {
-          "type": "string",
-          "title": "Experience (years)",
-          "x-ms-dataverse-attribute": "axm365_experienceyears",
-          "x-ms-dataverse-type": "IntegerType",
-          "x-ms-schema-name": "axm365_Experienceyears"
-        },
-        "axm365_joindate": {
-          "type": "string",
-          "title": "Join Date",
-          "x-ms-dataverse-attribute": "axm365_joindate",
-          "x-ms-dataverse-type": "DateTimeType",
-          "x-ms-schema-name": "axm365_JoinDate"
-        },
-        "axm365_shortbio": {
-          "type": "string",
-          "title": "Short Bio",
-          "x-ms-dataverse-attribute": "axm365_shortbio",
-          "x-ms-dataverse-type": "MemoType",
-          "x-ms-schema-name": "axm365_ShortBio",
-          "maxLength": 2000
-        },
-        "axm365_specialization": {
-          "type": "string",
-          "title": "Specialization",
-          "x-ms-dataverse-attribute": "axm365_specialization",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "axm365_Specialization",
-          "maxLength": 100
-        },
-        "axm365_terminationdate": {
-          "type": "string",
-          "title": "Termination Date",
-          "x-ms-dataverse-attribute": "axm365_terminationdate",
-          "x-ms-dataverse-type": "DateTimeType",
-          "x-ms-schema-name": "axm365_Terminationdate"
-        },
-        "cr164_systemuser": {
-          "type": "string",
-          "title": "User",
-          "x-ms-dataverse-attribute": "cr164_systemuser",
-          "x-ms-dataverse-type": "LookupType",
-          "x-ms-schema-name": "cr164_SystemUser"
-        },
-        "cr164_systemusername": {
-          "type": "string",
-          "title": "cr164_systemusername",
-          "x-ms-dataverse-attribute": "cr164_systemusername",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr164_SystemUserName",
-          "x-ms-read-only": true,
-          "maxLength": 200
-        },
-        "cr164_systemuseryominame": {
-          "type": "string",
-          "title": "cr164_systemuseryominame",
-          "x-ms-dataverse-attribute": "cr164_systemuseryominame",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr164_SystemUserYomiName",
-          "x-ms-read-only": true,
-          "maxLength": 200
-        },
-        "cr9be_coachid": {
+        "axm365_coach": {
           "type": "string",
           "title": "Coach",
-          "x-ms-dataverse-attribute": "cr9be_coachid",
+          "x-ms-dataverse-attribute": "axm365_coach",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "axm365_Coach"
+        },
+        "axm365_coachname": {
+          "type": "string",
+          "title": "axm365_coachname",
+          "x-ms-dataverse-attribute": "axm365_coachname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "axm365_CoachName",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
+        "axm365_duration": {
+          "type": "string",
+          "title": "Duration (Minutes)",
+          "x-ms-dataverse-attribute": "axm365_duration",
+          "x-ms-dataverse-type": "DecimalType",
+          "x-ms-schema-name": "axm365_Duration",
+          "x-ms-read-only": true
+        },
+        "axm365_event": {
+          "type": "string",
+          "title": "Event",
+          "x-ms-dataverse-attribute": "axm365_event",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "axm365_Event"
+        },
+        "axm365_eventcoachattendanceid": {
+          "type": "string",
+          "title": "Event Coach Attendance",
+          "x-ms-dataverse-attribute": "axm365_eventcoachattendanceid",
           "x-ms-dataverse-type": "UniqueidentifierType",
-          "x-ms-schema-name": "cr9be_CoachId",
+          "x-ms-schema-name": "axm365_EventCoachAttendanceId",
           "x-ms-dataverse-primary-id": true,
           "required": true,
           "x-ms-keyType": "primary"
         },
-        "cr9be_contact": {
+        "axm365_eventname": {
           "type": "string",
-          "title": "Contact",
-          "x-ms-dataverse-attribute": "cr9be_contact",
-          "x-ms-dataverse-type": "LookupType",
-          "x-ms-schema-name": "cr9be_Contact"
-        },
-        "cr9be_contactname": {
-          "type": "string",
-          "title": "cr9be_contactname",
-          "x-ms-dataverse-attribute": "cr9be_contactname",
+          "title": "axm365_eventname",
+          "x-ms-dataverse-attribute": "axm365_eventname",
           "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9be_ContactName",
+          "x-ms-schema-name": "axm365_EventName",
           "x-ms-read-only": true,
-          "maxLength": 160
+          "maxLength": 850
         },
-        "cr9be_contactyominame": {
-          "type": "string",
-          "title": "cr9be_contactyominame",
-          "x-ms-dataverse-attribute": "cr9be_contactyominame",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9be_ContactYomiName",
-          "x-ms-read-only": true,
-          "maxLength": 450
-        },
-        "cr9be_name": {
+        "axm365_name": {
           "type": "string",
           "title": "Name",
-          "x-ms-dataverse-attribute": "cr9be_name",
+          "x-ms-dataverse-attribute": "axm365_name",
           "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9be_Name",
+          "x-ms-schema-name": "axm365_Name",
           "x-ms-dataverse-primary-name": true,
           "required": true,
           "maxLength": 850
-        },
-        "cr9be_picture": {
-          "type": "string",
-          "title": "Picture",
-          "x-ms-dataverse-attribute": "cr9be_picture",
-          "x-ms-dataverse-type": "ImageType",
-          "x-ms-schema-name": "cr9be_Picture"
-        },
-        "cr9be_picture_timestamp": {
-          "type": "string",
-          "title": "cr9be_picture_timestamp",
-          "x-ms-dataverse-attribute": "cr9be_picture_timestamp",
-          "x-ms-dataverse-type": "BigIntType",
-          "x-ms-schema-name": "cr9be_Picture_Timestamp",
-          "x-ms-read-only": true
-        },
-        "cr9be_picture_url": {
-          "type": "string",
-          "title": "cr9be_picture_url",
-          "x-ms-dataverse-attribute": "cr9be_picture_url",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9be_Picture_URL",
-          "x-ms-read-only": true,
-          "maxLength": 200
-        },
-        "cr9be_pictureid": {
-          "type": "string",
-          "title": "cr9be_pictureid",
-          "x-ms-dataverse-attribute": "cr9be_pictureid",
-          "x-ms-dataverse-type": "UniqueidentifierType",
-          "x-ms-schema-name": "cr9be_PictureId",
-          "x-ms-read-only": true
-        },
-        "cr9be_surname": {
-          "type": "string",
-          "title": "Surname",
-          "x-ms-dataverse-attribute": "cr9be_surname",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9be_Surname",
-          "maxLength": 100
         },
         "createdby": {
           "type": "string",
@@ -413,7 +311,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "4d1b0e18-a8fa-f011-8407-6045bde1238c",
+          "x-ms-optionsetmetadataid": "78d4c453-ffa0-f011-bbd2-0022489aea5a",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status",
           "x-ms-optionSetType": "State"
@@ -444,7 +342,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "571b0e18-a8fa-f011-8407-6045bde1238c",
+          "x-ms-optionsetmetadataid": "82d4c453-ffa0-f011-bbd2-0022489aea5a",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status Reason",
           "x-ms-optionSetType": "Status"
@@ -481,8 +379,8 @@
         }
       },
       "required": [
-        "cr9be_coachid",
-        "cr9be_name",
+        "axm365_eventcoachattendanceid",
+        "axm365_name",
         "createdbyyominame",
         "createdonbehalfbyyominame",
         "modifiedbyyominame",

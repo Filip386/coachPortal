@@ -1,6 +1,12 @@
 /* eslint-disable */
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
 import { getContext } from "@microsoft/power-apps/app";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
 import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
@@ -17,7 +23,12 @@ import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
 import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_generationstocoachesesModel";
-import { unwrapOrThrow, unwrap, fetchAllPages, fetchFacilities } from "../utils/dataverse";
+import {
+  unwrapOrThrow,
+  unwrap,
+  fetchAllPages,
+  fetchFacilities,
+} from "../utils/dataverse";
 import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
@@ -34,6 +45,7 @@ interface DataContextValue {
   allGenerations: Axm365_generations[];
   generationsToCoaches: Axm365_generationstocoacheses[];
   loading: boolean;
+  loggedInCoachId: string | null;
   error: string | null;
   refreshPlayers: () => Promise<void>;
   refreshEvents: () => Promise<void>;
@@ -74,20 +86,40 @@ function writeCache<T>(key: string, data: T[]) {
   } catch {}
 }
 
-export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [coachName, setCoachName] = useState<string | null>(null);
+  const [loggedInCoachId, setLoggedInCoachId] = useState<string | null>(null);
   const [coachId, setCoachId] = useState<string | null>(null);
-  const [players, setPlayers] = useState<Cr9be_players[]>(() => readCache(CACHE.players));
-  const [events, setEvents] = useState<Axm365_events[]>(() => readCache(CACHE.events));
-  const [attendances, setAttendances] = useState<Axm365_eventattendances[]>(() => readCache(CACHE.attendances));
-  const [invoices, setInvoices] = useState<Invoices[]>(() => readCache(CACHE.invoices));
-  const [facilities, setFacilities] = useState<Facility[]>(() => readCache(CACHE.facilities));
-  const [performances, setPerformances] = useState<Axm365_playereventperformances[]>(() => readCache(CACHE.performances));
-  const [allGenerations, setAllGenerations] = useState<Axm365_generations[]>(() => readCache(CACHE.generations));
-  const [generationsToCoaches, setGenerationsToCoaches] = useState<Axm365_generationstocoacheses[]>(() => readCache(CACHE.generationsToCoaches));
+  const [players, setPlayers] = useState<Cr9be_players[]>(() =>
+    readCache(CACHE.players)
+  );
+  const [events, setEvents] = useState<Axm365_events[]>(() =>
+    readCache(CACHE.events)
+  );
+  const [attendances, setAttendances] = useState<Axm365_eventattendances[]>(
+    () => readCache(CACHE.attendances)
+  );
+  const [invoices, setInvoices] = useState<Invoices[]>(() =>
+    readCache(CACHE.invoices)
+  );
+  const [facilities, setFacilities] = useState<Facility[]>(() =>
+    readCache(CACHE.facilities)
+  );
+  const [performances, setPerformances] = useState<
+    Axm365_playereventperformances[]
+  >(() => readCache(CACHE.performances));
+  const [allGenerations, setAllGenerations] = useState<Axm365_generations[]>(
+    () => readCache(CACHE.generations)
+  );
+  const [generationsToCoaches, setGenerationsToCoaches] = useState<
+    Axm365_generationstocoacheses[]
+  >(() => readCache(CACHE.generationsToCoaches));
 
   // loading = true only on very first open (nothing in cache)
-  const hasCache = readCache(CACHE.players).length > 0 || readCache(CACHE.events).length > 0;
+  const hasCache =
+    readCache(CACHE.players).length > 0 || readCache(CACHE.events).length > 0;
   const [loading, setLoading] = useState(!hasCache);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,7 +158,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshInvoices = useCallback(async () => {
-    const res = await InvoicesService.getAll({ });
+    const res = await InvoicesService.getAll({});
     const data = unwrapOrThrow<Invoices>(res);
     setInvoices(data);
     writeCache(CACHE.invoices, data);
@@ -146,66 +178,148 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshGenerations = useCallback(async () => {
-    const res = await Axm365_generationsService.getAll({ filter: "statecode eq 0" });
+    const res = await Axm365_generationsService.getAll({
+      filter: "statecode eq 0",
+    });
     const data = unwrapOrThrow<Axm365_generations>(res);
     setAllGenerations(data);
     writeCache(CACHE.generations, data);
   }, []);
 
   const refreshGenerationsToCoaches = useCallback(async () => {
-    const res = await Axm365_generationstocoachesesService.getAll({ filter: "statecode eq 0" });
+    const res = await Axm365_generationstocoachesesService.getAll({
+      filter: "statecode eq 0",
+    });
     const data = unwrapOrThrow<Axm365_generationstocoacheses>(res);
     setGenerationsToCoaches(data);
     writeCache(CACHE.generationsToCoaches, data);
   }, []);
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshPlayers(), refreshEvents(), refreshAttendances(), refreshInvoices(), refreshFacilities(), refreshPerformances(), refreshGenerations(), refreshGenerationsToCoaches()]);
-  }, [refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches]);
+    await Promise.all([
+      refreshPlayers(),
+      refreshEvents(),
+      refreshAttendances(),
+      refreshInvoices(),
+      refreshFacilities(),
+      refreshPerformances(),
+      refreshGenerations(),
+      refreshGenerationsToCoaches(),
+    ]);
+  }, [
+    refreshPlayers,
+    refreshEvents,
+    refreshAttendances,
+    refreshInvoices,
+    refreshFacilities,
+    refreshPerformances,
+    refreshGenerations,
+    refreshGenerationsToCoaches,
+  ]);
 
   useEffect(() => {
     setError(null);
 
     // Fetch logged-in user info, then resolve their coach record by ID
-    getContext().then(async (ctx) => {
-      const fullName = ctx.user.fullName;
-      if (!fullName) return;
-      setCoachName(fullName);
+    getContext()
+      .then(async (ctx) => {
+        const fullName = ctx.user.fullName;
+        const userId = ctx.user.objectId;
+        console.log("[CoachPortal] Logged IN found:", userId);
+        if (!fullName) return;
+        setCoachName(fullName);
+        const res = await Cr9be_coachsService.getAll({
+          filter: "statecode eq 0",
+        });
 
-      // Load coaches and find the one whose contact name matches the logged-in user
-      try {
-        const res = await Cr9be_coachsService.getAll({ filter: "statecode eq 0" });
         const coaches = unwrap<Cr9be_coachs>(res);
+
         const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
-        const match = coaches.find(
-          (c) =>
-            norm(c.cr9be_contactname) === norm(fullName) ||
-            norm(`${c.cr9be_name ?? ""} ${c.cr9be_surname ?? ""}`.trim()) === norm(fullName) ||
-            norm(c.cr9be_name) === norm(fullName)
-        );
+
+        const match = coaches.find((coach) => {
+           const fullCoachName = `${coach.cr9be_name ?? ""} ${
+             coach.cr9be_surname ?? ""
+           }`.trim();
+          return norm(fullCoachName) === norm(fullName);
+        });
+
         if (match) {
-          console.log("[CoachPortal] Matched coach:", match.cr9be_name, match.cr9be_coachid);
-          setCoachId(match.cr9be_coachid);
+          console.log("[CoachPortal] Coach found:", match);
+          console.log("[CoachPortal] Coach ID:", match.cr9be_coachid);
+
+          setLoggedInCoachId(match.cr9be_coachid);
         }
-      } catch {}
-    }).catch(() => {});
+        // Load coaches and find the one whose contact name matches the logged-in user
+        try {
+          const res = await Cr9be_coachsService.getAll({
+            filter: "statecode eq 0",
+          });
+          const coaches = unwrap<Cr9be_coachs>(res);
+          const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
+          const match = coaches.find(
+            (c) =>
+              norm(c.cr9be_contactname) === norm(fullName) ||
+              norm(`${c.cr9be_name ?? ""} ${c.cr9be_surname ?? ""}`.trim()) ===
+                norm(fullName) ||
+              norm(c.cr9be_name) === norm(fullName)
+          );
+          if (match) {
+            console.log(
+              "[CoachPortal] Matched coach:",
+              match.cr9be_name,
+              match.cr9be_coachid
+            );
+            setCoachId(match.cr9be_coachid);
+          }
+        } catch {}
+      })
+      .catch(() => {});
 
     // Priority: players + events first (home screen needs them)
     // Attendances deferred - not shown on home screen
     Promise.all([refreshPlayers(), refreshEvents(), refreshInvoices()])
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load data")
+      )
       .finally(() => setLoading(false));
 
     // Attendances, facilities, performances, generations load in background after primary data
     refreshAttendances().catch(() => {});
-    refreshFacilities().catch((err) => { console.error("[CoachPortal] Facilities load failed:", err); });
+    refreshFacilities().catch((err) => {
+      console.error("[CoachPortal] Facilities load failed:", err);
+    });
     refreshPerformances().catch(() => {});
     refreshGenerations().catch(() => {});
     refreshGenerationsToCoaches().catch(() => {});
   }, []);
 
   return (
-    <DataContext.Provider value={{ coachName, coachId, players, events, attendances, invoices, facilities, performances, allGenerations, generationsToCoaches, loading, error, refreshPlayers, refreshEvents, refreshAttendances, refreshInvoices, refreshFacilities, refreshPerformances, refreshGenerations, refreshGenerationsToCoaches, refreshAll }}>
+    <DataContext.Provider
+      value={{
+        coachName,
+        coachId,
+        loggedInCoachId,
+        players,
+        events,
+        attendances,
+        invoices,
+        facilities,
+        performances,
+        allGenerations,
+        generationsToCoaches,
+        loading,
+        error,
+        refreshPlayers,
+        refreshEvents,
+        refreshAttendances,
+        refreshInvoices,
+        refreshFacilities,
+        refreshPerformances,
+        refreshGenerations,
+        refreshGenerationsToCoaches,
+        refreshAll,
+      }}
+    >
       {children}
     </DataContext.Provider>
   );

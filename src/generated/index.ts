@@ -5,6 +5,7 @@
 
 // Models
 export * as Axm365_eventattendancesModel from './models/Axm365_eventattendancesModel';
+export * as Axm365_eventcoachattendancesModel from './models/Axm365_eventcoachattendancesModel';
 export * as Axm365_eventsModel from './models/Axm365_eventsModel';
 export * as Axm365_generationsModel from './models/Axm365_generationsModel';
 export * as Axm365_generationstocoachesesModel from './models/Axm365_generationstocoachesesModel';
@@ -18,6 +19,7 @@ export * as MicrosoftDataverseModel from './models/MicrosoftDataverseModel';
 
 // Services
 export * from './services/Axm365_eventattendancesService';
+export * from './services/Axm365_eventcoachattendancesService';
 export * from './services/Axm365_eventsService';
 export * from './services/Axm365_generationsService';
 export * from './services/Axm365_generationstocoachesesService';

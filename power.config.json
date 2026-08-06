@@ -55,8 +55,7 @@
         },
         "coaches": {
           "entitySetName": "cr9be_coachs",
-          "logicalName": "cr9be_coach",
-          "isHidden": false
+          "logicalName": "cr9be_coach"
         },
         "generationstocoaches": {
           "entitySetName": "axm365_generationstocoacheses",
@@ -67,6 +66,10 @@
           "entitySetName": "axm365_generations",
           "logicalName": "axm365_generation",
           "isHidden": false
+        },
+        "eventcoachattendances": {
+          "entitySetName": "axm365_eventcoachattendances",
+          "logicalName": "axm365_eventcoachattendance"
         }
       },
       "environmentVariableName": ""
