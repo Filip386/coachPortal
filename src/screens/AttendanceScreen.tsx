@@ -37,10 +37,8 @@ import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
 type AttendanceMark = "present" | "late" | "absent";
+
 const CLOCK_STORAGE_KEY = "coach_clock_session";
-
-
-
 
 const RATING_DEFAULTS: Record<number, number> = {
   1: 10,
@@ -55,6 +53,7 @@ const CODE_TO_STARS = (code?: number): number =>
 
 const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
   const avg = (t + e + ta + tp) / 4;
+
   return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
 };
 
@@ -80,7 +79,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     coachId,
     loading,
     error,
-    loggedInCoachId,
     refreshAttendances,
     refreshPerformances,
     allGenerations,
@@ -90,45 +88,80 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
+
   const [selectedEventId, setSelectedEventId] = useState<string | null>(
     initialEventId ?? null
   );
+
   const [saveSuccess, setSaveSuccess] = useState(false);
+
   const [selectedGenerationId, setSelectedGenerationId] =
     useState<string>("all");
+
   const [genAutoSelected, setGenAutoSelected] = useState(false);
   const [playerSearch, setPlayerSearch] = useState("");
   const [showGenerationPicker, setShowGenerationPicker] = useState(false);
   const [genSearch, setGenSearch] = useState("");
   const [showEventPicker, setShowEventPicker] = useState(false);
+
+  // ============================================================
+  // COACH CLOCK STATE
+  // ============================================================
+
   const [coachAttendanceId, setCoachAttendanceId] = useState<string | null>(
     null
   );
+
   const [clockedIn, setClockedIn] = useState(false);
+
   const [clockSaving, setClockSaving] = useState(false);
+
   const [clockError, setClockError] = useState<string | null>(null);
+
   const [clockStartTime, setClockStartTime] = useState<number | null>(null);
+
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // Performance edit modal state
+  // IMPORTANT:
+  // This tells us WHICH EVENT the current clock session belongs to.
+  const [clockedInEventId, setClockedInEventId] = useState<string | null>(null);
+
+  // IMPORTANT:
+  // This is calculated outside the useMemo because it is used
+  // throughout the JSX.
+  const isCurrentEventClockedIn =
+    clockedIn && !!clockedInEventId && clockedInEventId === selectedEventId;
+
+  // ============================================================
+  // PERFORMANCE EDIT MODAL STATE
+  // ============================================================
+
   const [perfEditPlayerId, setPerfEditPlayerId] = useState<string | null>(null);
+
   const [editRating, setEditRating] = useState(2);
   const [editTechnique, setEditTechnique] = useState(30);
   const [editEffort, setEditEffort] = useState(30);
   const [editTactical, setEditTactical] = useState(30);
   const [editTeamPlay, setEditTeamPlay] = useState(30);
   const [editNotes, setEditNotes] = useState("");
+
   const [perfSaving, setPerfSaving] = useState(false);
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
 
+  // ============================================================
+  // RECENT EVENTS / TODAY EVENT
+  // ============================================================
+
   const { recentEvents, todayEvent } = useMemo(() => {
     const dated = events.filter((e) => e.axm365_eventdate);
+
     const now = new Date();
+
     const todayStr = now.toDateString();
 
-    // Event picker shows last week's events only — days -8 through -2, excluding
-    // today and yesterday (today's event is still auto-selected separately below).
+    // Event picker shows last week's events only:
+    // days -8 through -2.
     const startLastWeek = new Date(
       now.getFullYear(),
       now.getMonth(),
@@ -146,6 +179,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     const recent = dated
       .filter((e) => {
         const t = new Date(e.axm365_eventdate!).getTime();
+
         return t >= startLastWeek && t <= endLastWeek;
       })
       .sort(byDateDesc);
@@ -155,13 +189,19 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         (e) => new Date(e.axm365_eventdate!).toDateString() === todayStr
       ) ?? null;
 
-    return { recentEvents: recent, todayEvent: today };
+    return {
+      recentEvents: recent,
+      todayEvent: today,
+    };
   }, [events]);
 
-  // Build this coach's generation list from player records (reliable) + secondary junction table.
-  // Falls back to all player generations when no coach-specific match (e.g. during load or test accounts).
+  // ============================================================
+  // GENERATIONS
+  // ============================================================
+
   const generations = useMemo(() => {
     const seen = new Set<string>();
+
     const result: { id: string; name: string }[] = [];
 
     const coachPlayers = coachId
@@ -172,33 +212,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     sourcePlayers.forEach((p) => {
       const id = (p as any)._cr9be_generation_value as string | undefined;
+
       const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
 
       if (id && name && !seen.has(id)) {
         seen.add(id);
-        result.push({ id, name });
+
+        result.push({
+          id,
+          name,
+        });
       }
     });
 
-    
-
-    // Secondary generations from the junction table (generationstocoaches)
+    // Secondary generations from generationstocoaches
     generationsToCoaches
       .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
       .forEach((gtc) => {
         const genId = (gtc as any)._axm365_generation_value as
           | string
           | undefined;
+
         const genName = gtc.axm365_generationname;
 
         if (genId && genName && !seen.has(genId)) {
           seen.add(genId);
-          result.push({ id: genId, name: genName });
+
+          result.push({
+            id: genId,
+            name: genName,
+          });
         }
       });
 
     const yearOf = (s: string) => {
       const m = s.match(/\d{4}/) || s.match(/\d+/);
+
       return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
     };
 
@@ -208,12 +257,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
     });
-  }, [coachName, players, generationsToCoaches]);
+  }, [coachId, players, generationsToCoaches]);
 
-  // Primary generation: first from Axm365_generations table for this coach,
-  // falling back to first entry in the player-derived list above
+  // ============================================================
+  // PRIMARY GENERATION
+  // ============================================================
+
   const primaryGenId = useMemo(() => {
-    if (!coachId) return generations[0]?.id ?? null;
+    if (!coachId) {
+      return generations[0]?.id ?? null;
+    }
 
     const fromTable = allGenerations.find(
       (g) => (g as any)._cr9be_coach_value === coachId
@@ -228,6 +281,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       setGenAutoSelected(true);
     }
   }, [primaryGenId, genAutoSelected]);
+
+  // ============================================================
+  // SHOWN PLAYERS
+  // ============================================================
 
   const shownPlayers = useMemo(
     () =>
@@ -245,11 +302,27 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       : generations.find((g) => g.id === selectedGenerationId)?.name ??
         "All Generations";
 
+  // ============================================================
+  // DEFAULT EVENT
+  // ============================================================
+
   useEffect(() => {
     if (events.length > 0 && !selectedEventId && !initialEventId) {
       setSelectedEventId(todayEvent?.axm365_eventid ?? null);
     }
   }, [events, todayEvent]);
+
+  // ============================================================
+  // CLEAR CLOCK ERROR WHEN CHANGING EVENT
+  // ============================================================
+
+  useEffect(() => {
+    setClockError(null);
+  }, [selectedEventId]);
+
+  // ============================================================
+  // LOAD ATTENDANCE MARKS
+  // ============================================================
 
   useEffect(() => {
     const base: Record<string, AttendanceMark> = {};
@@ -275,9 +348,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setMarks(base);
   }, [selectedEventId, attendances, players]);
 
-  // Load performance data when modal opens for a player+event
+  // ============================================================
+  // LOAD PERFORMANCE DATA
+  // ============================================================
+
   useEffect(() => {
-    if (!perfEditPlayerId || !selectedEventId) return;
+    if (!perfEditPlayerId || !selectedEventId) {
+      return;
+    }
 
     const existing = performances.find(
       (p) =>
@@ -291,12 +369,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       );
 
       setEditRating(stars);
+
       setEditTechnique(existing.axm365_technique ?? RATING_DEFAULTS[stars]);
+
       setEditEffort(existing.axm365_effort ?? RATING_DEFAULTS[stars]);
+
       setEditTactical(
         existing.axm365_tacticalawareness ?? RATING_DEFAULTS[stars]
       );
+
       setEditTeamPlay(existing.axm365_teamplay ?? RATING_DEFAULTS[stars]);
+
       setEditNotes(existing.axm365_notes ?? "");
     } else {
       setEditRating(2);
@@ -309,7 +392,65 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
-  }, [perfEditPlayerId, selectedEventId]);
+  }, [perfEditPlayerId, selectedEventId, performances]);
+
+  // ============================================================
+  // RESTORE CLOCK SESSION
+  // ============================================================
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(CLOCK_STORAGE_KEY);
+
+      if (!stored) {
+        return;
+      }
+
+      const session = JSON.parse(stored);
+
+      console.log("[Clock] Stored session:", session);
+
+      // We require eventId as well.
+      if (
+        session?.clockedIn &&
+        session?.coachAttendanceId &&
+        session?.clockStartTime &&
+        session?.eventId
+      ) {
+        const elapsed = Math.floor(
+          (Date.now() - session.clockStartTime) / 1000
+        );
+
+        setClockedIn(true);
+
+        setCoachAttendanceId(session.coachAttendanceId);
+
+        setClockStartTime(session.clockStartTime);
+
+        setElapsedSeconds(Math.max(0, elapsed));
+
+        setClockedInEventId(session.eventId);
+
+        console.log("[Clock] Restored clock session:", {
+          eventId: session.eventId,
+          coachAttendanceId: session.coachAttendanceId,
+          elapsed,
+        });
+      } else {
+        console.log("[Clock] Stored session is incomplete.");
+
+        localStorage.removeItem(CLOCK_STORAGE_KEY);
+      }
+    } catch (err) {
+      console.error("[Clock] Failed to restore clock session:", err);
+
+      localStorage.removeItem(CLOCK_STORAGE_KEY);
+    }
+  }, []);
+
+  // ============================================================
+  // PERFORMANCE RATING HANDLERS
+  // ============================================================
 
   const handleEditRatingChange = (stars: number) => {
     const def = RATING_DEFAULTS[stars] ?? 50;
@@ -323,55 +464,36 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const handleTechChange = (v: number) => {
     setEditTechnique(v);
+
     setEditRating(recalcRating(v, editEffort, editTactical, editTeamPlay));
   };
 
   const handleEffortChange = (v: number) => {
     setEditEffort(v);
+
     setEditRating(recalcRating(editTechnique, v, editTactical, editTeamPlay));
   };
 
   const handleTacticalChange = (v: number) => {
     setEditTactical(v);
+
     setEditRating(recalcRating(editTechnique, editEffort, v, editTeamPlay));
   };
 
   const handleTeamPlayChange = (v: number) => {
     setEditTeamPlay(v);
+
     setEditRating(recalcRating(editTechnique, editEffort, editTactical, v));
   };
-  useEffect(() => {
-  try {
-    const stored = localStorage.getItem(CLOCK_STORAGE_KEY);
 
-    if (!stored) return;
-
-    const session = JSON.parse(stored);
-
-    if (
-      session?.clockedIn &&
-      session?.coachAttendanceId &&
-      session?.clockStartTime
-    ) {
-      const elapsed = Math.floor(
-        (Date.now() - session.clockStartTime) / 1000
-      );
-
-      setClockedIn(true);
-      setCoachAttendanceId(session.coachAttendanceId);
-      setClockStartTime(session.clockStartTime);
-      setElapsedSeconds(Math.max(0, elapsed));
-
-      console.log("Restored clock session:", session);
-    }
-  } catch (err) {
-    console.error("Failed to restore clock session:", err);
-    localStorage.removeItem(CLOCK_STORAGE_KEY);
-  }
-}, []);
+  // ============================================================
+  // SAVE PERFORMANCE
+  // ============================================================
 
   const savePerfData = async () => {
-    if (!perfEditPlayerId || !selectedEventId) return;
+    if (!perfEditPlayerId || !selectedEventId) {
+      return;
+    }
 
     setPerfSaving(true);
     setPerfSaveError(null);
@@ -397,11 +519,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         axm365_performancename: `${perfPlayer?.cr9be_name ?? "Player"} - ${
           selectedEvent?.axm365_name ?? "Event"
         }`,
+
         axm365_raiting: ratingCode as any,
+
         axm365_technique: editTechnique,
+
         axm365_effort: editEffort,
+
         axm365_tacticalawareness: editTactical,
+
         axm365_teamplay: editTeamPlay,
+
         axm365_notes: editNotes,
       };
 
@@ -411,25 +539,29 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           payload as any
         );
 
-        if (!res.success)
+        if (!res.success) {
           throw new Error(
             (res.error as any)?.message ??
               JSON.stringify(res.error) ??
               "Update failed"
           );
+        }
       } else {
         const res = await Axm365_playereventperformancesService.create({
           ...payload,
+
           "axm365_cr9be_Player@odata.bind": `/cr9be_players(${perfEditPlayerId})`,
+
           "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
         } as any);
 
-        if (!res.success)
+        if (!res.success) {
           throw new Error(
             (res.error as any)?.message ??
               JSON.stringify(res.error) ??
               "Create failed"
           );
+        }
       }
 
       refreshPerformances().catch(() => {});
@@ -449,8 +581,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
+  // ============================================================
+  // ATTENDANCE HELPERS
+  // ============================================================
+
   const setMark = (id: string, v: AttendanceMark) =>
-    setMarks((m) => ({ ...m, [id]: v }));
+    setMarks((m) => ({
+      ...m,
+      [id]: v,
+    }));
 
   const presentCount = shownPlayers.filter(
     (p) => (marks[p.cr9be_playerid] ?? "present") !== "absent"
@@ -468,8 +607,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const throwIfError = (result: any, context: string) => {
     const err = result?.error ?? result?.Error ?? result?.errorCode;
 
-    if (err) throw new Error(`${context}: ${err?.message ?? err}`);
+    if (err) {
+      throw new Error(`${context}: ${err?.message ?? err}`);
+    }
   };
+
+  // ============================================================
+  // CLOCK TIMER
+  // ============================================================
 
   useEffect(() => {
     if (!clockedIn || !clockStartTime) {
@@ -487,18 +632,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     };
   }, [clockedIn, clockStartTime]);
 
-  // Automatically clock out after 9 hours
+  // ============================================================
+  // AUTO CLOCK OUT AFTER 9 HOURS
+  // ============================================================
+
   useEffect(() => {
     if (!clockedIn || !clockStartTime || !coachAttendanceId) {
       return;
     }
 
     const AUTO_CLOCK_OUT_SECONDS = 9 * 60 * 60;
+
     const checkAutoClockOut = async () => {
       const elapsed = Math.floor((Date.now() - clockStartTime) / 1000);
 
       if (elapsed >= AUTO_CLOCK_OUT_SECONDS) {
-        console.log("9 hours reached. Automatically clocking out...");
+        console.log("[Clock] 9 hours reached. Automatically clocking out...");
 
         try {
           setClockSaving(true);
@@ -514,15 +663,20 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           throwIfError(res, "Automatic Clock Out");
 
           setClockedIn(false);
+
           setCoachAttendanceId(null);
+
+          setClockedInEventId(null);
+
           setClockStartTime(null);
+
           setElapsedSeconds(AUTO_CLOCK_OUT_SECONDS);
 
           localStorage.removeItem(CLOCK_STORAGE_KEY);
-          
-          console.log("Automatic clock out completed.");
+
+          console.log("[Clock] Automatic clock out completed.");
         } catch (err) {
-          console.error("Automatic clock out failed:", err);
+          console.error("[Clock] Automatic clock out failed:", err);
 
           setClockError(
             err instanceof Error ? err.message : "Automatic clock out failed."
@@ -540,36 +694,64 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     };
   }, [clockedIn, clockStartTime, coachAttendanceId]);
 
+  // ============================================================
+  // FORMAT TIMER
+  // ============================================================
+
   const formatElapsedTime = (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600);
+
     const minutes = Math.floor((totalSeconds % 3600) / 60);
+
     const seconds = totalSeconds % 60;
 
     return [
       hours.toString().padStart(2, "0"),
+
       minutes.toString().padStart(2, "0"),
+
       seconds.toString().padStart(2, "0"),
     ].join(":");
   };
 
-  const handleClockInOut = async () => {
-    console.log("Selected event id:", selectedEventId);
+  // ============================================================
+  // CLOCK IN / CLOCK OUT
+  // ============================================================
 
-    console.log(
-      "handleClockInOut called. clockedIn:",
+  const handleClockInOut = async () => {
+    console.log("[Clock] Selected event id:", selectedEventId);
+
+    console.log("[Clock] handleClockInOut called:", {
       clockedIn,
-      "coachAttendanceId:",
-      coachAttendanceId
-    );
+      clockedInEventId,
+      selectedEventId,
+      coachAttendanceId,
+      coachId,
+    });
+
     if (!selectedEventId) {
       setClockError("No event selected.");
+
       return;
     }
 
-    console.log("Coach ID: ", loggedInCoachId);
-
-    if (!loggedInCoachId) {
+    if (!coachId) {
       setClockError("Coach information is missing.");
+
+      return;
+    }
+
+    // ==========================================================
+    // IMPORTANT:
+    // If already clocked into Event A and user selected Event B,
+    // do NOT create another attendance record.
+    // ==========================================================
+
+    if (clockedIn && clockedInEventId && clockedInEventId !== selectedEventId) {
+      setClockError(
+        "You are already clocked in for another event. Please clock out first."
+      );
+
       return;
     }
 
@@ -577,11 +759,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setClockError(null);
 
     try {
-      // =========================================================
+      // ========================================================
       // CLOCK OUT
-      // Update the SAME record created during Clock In
-      // =========================================================
+      // ========================================================
+
       if (clockedIn && coachAttendanceId) {
+        console.log("[Clock] Clocking OUT:", {
+          attendanceId: coachAttendanceId,
+          eventId: clockedInEventId,
+        });
+
         const res = await Axm365_eventcoachattendancesService.update(
           coachAttendanceId,
           {
@@ -592,33 +779,51 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         throwIfError(res, "Clock Out");
 
         setClockedIn(false);
+
         setCoachAttendanceId(null);
+
+        setClockedInEventId(null);
+
         setClockStartTime(null);
+
         setElapsedSeconds(0);
+
         localStorage.removeItem(CLOCK_STORAGE_KEY);
+
+        console.log("[Clock] Clock OUT completed.");
 
         return;
       }
 
-      // =========================================================
+      // ========================================================
       // CLOCK IN
-      // Create ONE coach attendance record
-      // =========================================================
+      // ========================================================
+
+      console.log("[Clock] Clocking IN:", {
+        coachId,
+        eventId: selectedEventId,
+      });
+
       const res = await Axm365_eventcoachattendancesService.create({
         axm365_name: `${
           coachName ?? "Coach"
         } - ${new Date().toLocaleDateString()}`,
+
         axm365_clockin: new Date(),
 
-        "axm365_Coach@odata.bind": `/cr9be_coachs(${loggedInCoachId})`,
+        // USE coachId
+        "axm365_Coach@odata.bind": `/cr9be_coachs(${coachId})`,
 
+        // CURRENT EVENT
         "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
       } as any);
 
       throwIfError(res, "Clock In");
 
-      // The generated service response type does not expose
-      // "data", so access the returned value as any.
+      // ========================================================
+      // GET CREATED RECORD ID
+      // ========================================================
+
       const createdId =
         (res as any)?.data?.axm365_eventcoachattendanceid ??
         (res as any)?.axm365_eventcoachattendanceid ??
@@ -630,28 +835,47 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         );
       }
 
-      // Remember the created record.
-      // Clock Out will update this SAME record.
-     const startTime = Date.now();
+      const startTime = Date.now();
+
+      // ========================================================
+      // SAVE ACTIVE SESSION
+      // ========================================================
 
       setCoachAttendanceId(createdId);
+
+      setClockedInEventId(selectedEventId);
+
       setClockedIn(true);
+
       setClockStartTime(startTime);
+
       setElapsedSeconds(0);
 
+      // IMPORTANT:
+      // Save eventId so we know which event is active
+      // even after switching events or refreshing the page.
       localStorage.setItem(
         CLOCK_STORAGE_KEY,
         JSON.stringify({
           clockedIn: true,
+
           coachAttendanceId: createdId,
+
           clockStartTime: startTime,
+
           eventId: selectedEventId,
-          coachId: loggedInCoachId,
+
+          coachId: coachId,
         })
       );
 
+      console.log("[Clock] Clock IN completed:", {
+        attendanceId: createdId,
+        eventId: selectedEventId,
+        coachId,
+      });
     } catch (err) {
-      console.error("Clock In/Out failed:", err);
+      console.error("[Clock] Clock In/Out failed:", err);
 
       setClockError(
         err instanceof Error ? err.message : "Clock In/Out failed."
@@ -661,15 +885,21 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
+  // ============================================================
+  // SAVE PLAYER ATTENDANCE
+  // ============================================================
 
   const saveAttendance = async () => {
-    if (!selectedEventId) return;
+    if (!selectedEventId) {
+      return;
+    }
 
     setSaveSuccess(false);
     setWriteError(null);
 
     if (shownPlayers.length === 0) {
       setWriteError("No players to save for this generation.");
+
       return;
     }
 
@@ -678,7 +908,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       for (const p of shownPlayers) {
         const playerId = p.cr9be_playerid;
+
         const mark = marks[playerId] ?? "present";
+
         const attended = mark !== "absent";
 
         const existing = attendances.find(
@@ -692,6 +924,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             existing.axm365_eventattendanceid,
             {
               axm365_name: p.cr9be_name,
+
               axm365_attended: attended,
             } as any
           );
@@ -700,8 +933,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         } else {
           const res = await Axm365_eventattendancesService.create({
             axm365_name: p.cr9be_name,
+
             "axm365_Player@odata.bind": `/cr9be_players(${playerId})`,
+
             "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
+
             axm365_attended: attended,
           } as any);
 
@@ -725,16 +961,27 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
+  // ============================================================
+  // SELECTED EVENT
+  // ============================================================
+
   const selectedEvent = events.find(
     (e) => e.axm365_eventid === selectedEventId
   );
 
   const eventName = selectedEvent ? selectedEvent.axm365_name : "Select Event";
 
-  // Player whose performance modal is open
+  // ============================================================
+  // PERFORMANCE PLAYER
+  // ============================================================
+
   const perfEditPlayer = players.find(
     (p) => p.cr9be_playerid === perfEditPlayerId
   );
+
+  // ============================================================
+  // RENDER
+  // ============================================================
 
   return (
     <>
@@ -762,7 +1009,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 height: 38,
                 borderRadius: 12,
                 background: "rgba(255,255,255,0.08)",
-                border: `1px solid rgba(255,255,255,0.14)`,
+                border: "1px solid rgba(255,255,255,0.14)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -776,7 +1023,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               onClick={() => setShowGenerationPicker(true)}
               style={{
                 background: "rgba(255,255,255,0.1)",
-                border: `1px solid rgba(255,255,255,0.2)`,
+                border: "1px solid rgba(255,255,255,0.2)",
                 borderRadius: 10,
                 color: COLORS.yellow,
                 fontFamily: monoStack,
@@ -805,12 +1052,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 size={12}
                 color={COLORS.yellow}
                 strokeWidth={2.5}
-                style={{ flexShrink: 0 }}
+                style={{
+                  flexShrink: 0,
+                }}
               />
             </button>
           </div>
 
-          <div style={{ marginTop: 18 }}>
+          <div
+            style={{
+              marginTop: 18,
+            }}
+          >
             <button
               onClick={() =>
                 recentEvents.length > 0 && setShowEventPicker(true)
@@ -845,7 +1098,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   size={12}
                   color={COLORS.yellow}
                   strokeWidth={2.5}
-                  style={{ flexShrink: 0 }}
+                  style={{
+                    flexShrink: 0,
+                  }}
                 />
               )}
             </button>
@@ -863,7 +1118,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               Mark Attendance
             </h1>
 
-            {/* CLOCK IN / CLOCK OUT BUTTON */}
+            {/* =================================================
+                CLOCK IN / CLOCK OUT
+            ================================================= */}
+
             <div
               style={{
                 marginTop: 14,
@@ -880,30 +1138,46 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   flex: 1,
                   height: 42,
                   padding: "0 16px",
+
                   background: clockSaving
                     ? "rgba(255,255,255,0.06)"
-                    : clockedIn
+                    : isCurrentEventClockedIn
                     ? "rgba(220, 38, 38, 0.18)"
                     : "rgba(255,255,255,0.10)",
-                  color: clockedIn ? "#fff" : COLORS.yellow,
+
+                  color: isCurrentEventClockedIn ? "#fff" : COLORS.yellow,
+
                   border: `1px solid ${
-                    clockedIn
+                    isCurrentEventClockedIn
                       ? "rgba(239,68,68,0.55)"
                       : "rgba(255,255,255,0.20)"
                   }`,
+
                   borderRadius: 12,
+
                   fontFamily: monoStack,
+
                   fontSize: 10,
+
                   fontWeight: 700,
+
                   letterSpacing: "0.13em",
+
                   cursor: clockSaving ? "not-allowed" : "pointer",
+
                   opacity: clockSaving ? 0.65 : 1,
+
                   transition: "all 0.2s ease",
+
                   display: "flex",
+
                   alignItems: "center",
+
                   justifyContent: "center",
+
                   gap: 8,
-                  boxShadow: clockedIn
+
+                  boxShadow: isCurrentEventClockedIn
                     ? "0 4px 14px rgba(220,38,38,0.18)"
                     : "none",
                 }}
@@ -913,17 +1187,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     width: 7,
                     height: 7,
                     borderRadius: "50%",
-                    background: clockedIn ? "#EF4444" : COLORS.yellow,
-                    boxShadow: clockedIn
+
+                    background: isCurrentEventClockedIn
+                      ? "#EF4444"
+                      : COLORS.yellow,
+
+                    boxShadow: isCurrentEventClockedIn
                       ? "0 0 0 4px rgba(239,68,68,0.12)"
                       : "0 0 0 4px rgba(255,214,0,0.08)",
+
                     flexShrink: 0,
                   }}
                 />
 
                 {clockSaving
                   ? "SAVING..."
-                  : clockedIn
+                  : isCurrentEventClockedIn
                   ? "CLOCK OUT"
                   : "CLOCK IN"}
               </button>
@@ -934,28 +1213,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   minWidth: 105,
                   padding: "0 14px",
                   boxSizing: "border-box",
-                  background: clockedIn
+
+                  background: isCurrentEventClockedIn
                     ? "rgba(255,255,255,0.12)"
                     : "rgba(255,255,255,0.06)",
+
                   border: "1px solid rgba(255,255,255,0.16)",
+
                   borderRadius: 12,
+
                   display: "flex",
+
                   flexDirection: "column",
+
                   alignItems: "center",
+
                   justifyContent: "center",
+
                   transition: "all 0.2s ease",
                 }}
               >
                 <div
                   style={{
                     fontFamily: monoStack,
+
                     fontSize: 7,
+
                     fontWeight: 600,
+
                     letterSpacing: "0.16em",
-                    color: clockedIn
+
+                    color: isCurrentEventClockedIn
                       ? "rgba(255,255,255,0.55)"
                       : "rgba(255,255,255,0.35)",
+
                     lineHeight: 1,
+
                     marginBottom: 4,
                   }}
                 >
@@ -965,22 +1258,36 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 <div
                   style={{
                     fontFamily: monoStack,
+
                     fontSize: 13,
+
                     fontWeight: 700,
+
                     letterSpacing: "0.08em",
+
                     lineHeight: 1,
-                    color: clockedIn ? COLORS.yellow : "rgba(255,255,255,0.45)",
+
+                    color: isCurrentEventClockedIn
+                      ? COLORS.yellow
+                      : "rgba(255,255,255,0.45)",
+
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {formatElapsedTime(elapsedSeconds)}
+                  {isCurrentEventClockedIn
+                    ? formatElapsedTime(elapsedSeconds)
+                    : "00:00:00"}
                 </div>
               </div>
             </div>
           </div>
 
           {!loading && shownPlayers.length > 0 && (
-            <div style={{ marginTop: 20 }}>
+            <div
+              style={{
+                marginTop: 20,
+              }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -1071,7 +1378,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       {(!loading || players.length > 0) &&
         shownPlayers.length > 0 &&
         (selectedEventId || initialEventId) && (
-          <div style={{ padding: "18px 16px 20px" }}>
+          <div
+            style={{
+              padding: "18px 16px 20px",
+            }}
+          >
             <div
               style={{
                 position: "relative",
@@ -1149,9 +1460,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 )
                 .map((p) => {
                   const playerId = p.cr9be_playerid;
+
                   const name = p.cr9be_name || "Unknown Player";
+
                   const num = p.cr9be_number ?? "?";
+
                   const pos = lookupName(p, "cr9be_position");
+
                   const initials = name
                     .split(" ")
                     .map((n: string) => n[0])
@@ -1159,7 +1474,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     .slice(0, 2)
                     .toUpperCase();
 
-                  // Get real performance data from Dataverse
                   const existingPerf = performances.find(
                     (perf) =>
                       perf._axm365_cr9be_player_value === playerId &&
@@ -1187,7 +1501,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         gap: 12,
                       }}
                     >
-                      {/* Clickable area for performance edit */}
                       <div
                         onClick={() => setPerfEditPlayerId(playerId)}
                         style={{
@@ -1228,14 +1541,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              border: `2px solid #fff`,
+                              border: "2px solid #fff",
                             }}
                           >
                             {num}
                           </span>
                         </div>
 
-                        <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            minWidth: 0,
+                          }}
+                        >
                           <div
                             style={{
                               fontWeight: 700,
@@ -1444,7 +1761,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </div>
         )}
 
-      {/* Generation picker modal */}
+      {/* ========================================================
+          GENERATION PICKER
+      ======================================================== */}
+
       {showGenerationPicker &&
         (() => {
           const filteredGens = generations.filter((g) =>
@@ -1452,7 +1772,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           );
 
           const options = [
-            { id: "all", name: "All Generations" },
+            {
+              id: "all",
+              name: "All Generations",
+            },
             ...filteredGens,
           ];
 
@@ -1518,7 +1841,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     Choose Generation
                   </div>
 
-                  <div style={{ position: "relative" }}>
+                  <div
+                    style={{
+                      position: "relative",
+                    }}
+                  >
                     <Search
                       size={14}
                       color={COLORS.mute}
@@ -1584,20 +1911,30 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         key={g.id}
                         onClick={() => {
                           setSelectedGenerationId(g.id);
+
                           setShowGenerationPicker(false);
+
                           setGenSearch("");
                         }}
                         style={{
                           background: isActive ? COLORS.navy : "#fff",
+
                           border: `1px solid ${
                             isActive ? COLORS.navy : COLORS.line
                           }`,
+
                           borderRadius: 14,
+
                           padding: "14px 16px",
+
                           cursor: "pointer",
+
                           display: "flex",
+
                           alignItems: "center",
+
                           gap: 12,
+
                           textAlign: "left",
                         }}
                       >
@@ -1642,7 +1979,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           return portalTarget ? createPortal(modal, portalTarget) : modal;
         })()}
 
-      {/* Event picker modal */}
+      {/* ========================================================
+          EVENT PICKER
+      ======================================================== */}
+
       {showEventPicker &&
         (() => {
           const modal = (
@@ -1753,19 +2093,28 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         key={e.axm365_eventid}
                         onClick={() => {
                           setSelectedEventId(e.axm365_eventid);
+
                           setShowEventPicker(false);
                         }}
                         style={{
                           background: isActive ? COLORS.navy : "#fff",
+
                           border: `1px solid ${
                             isActive ? COLORS.navy : COLORS.line
                           }`,
+
                           borderRadius: 14,
+
                           padding: "12px 14px",
+
                           cursor: "pointer",
+
                           display: "flex",
+
                           alignItems: "center",
+
                           gap: 12,
+
                           textAlign: "left",
                         }}
                       >
@@ -1774,11 +2123,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                             width: 42,
                             height: 42,
                             borderRadius: 10,
+
                             background: isActive ? COLORS.yellow : COLORS.cream,
+
                             display: "flex",
+
                             flexDirection: "column",
+
                             alignItems: "center",
+
                             justifyContent: "center",
+
                             flexShrink: 0,
                           }}
                         >
@@ -1896,7 +2251,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           return portalTarget ? createPortal(modal, portalTarget) : modal;
         })()}
 
-      {/* Performance edit modal */}
+      {/* ========================================================
+          PERFORMANCE EDIT MODAL
+      ======================================================== */}
+
       {perfEditPlayerId &&
         (() => {
           const modal = (
@@ -1923,7 +2281,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   overflow: "hidden",
                 }}
               >
-                {/* Handle */}
                 <div
                   style={{
                     padding: "12px 0 4px",
@@ -1942,7 +2299,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   />
                 </div>
 
-                {/* Header */}
                 <div
                   style={{
                     padding: "0 22px 14px",
@@ -2020,7 +2376,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   </div>
                 </div>
 
-                {/* Scrollable body */}
                 <div
                   style={{
                     overflowY: "auto",
@@ -2060,7 +2415,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   )}
 
-                  {/* Rating */}
                   <div>
                     <div
                       style={{
@@ -2118,7 +2472,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                           color: COLORS.navy,
                         }}
                       >
-                        {editRating}.0
+                        {editRating}
+                        .0
                       </div>
                     </div>
 
@@ -2136,7 +2491,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Sliders */}
                   <div>
                     <div
                       style={{
@@ -2185,7 +2539,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Notes */}
                   <div>
                     <div
                       style={{
@@ -2231,7 +2584,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Save button */}
                   <button
                     disabled={perfSaving}
                     onClick={savePerfData}

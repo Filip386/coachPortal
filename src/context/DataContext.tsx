@@ -16,6 +16,7 @@ import { Axm365_playereventperformancesService } from "../generated/services/Axm
 import { Axm365_generationsService } from "../generated/services/Axm365_generationsService";
 import { Axm365_generationstocoachesesService } from "../generated/services/Axm365_generationstocoachesesService";
 import { Cr9be_coachsService } from "../generated/services/Cr9be_coachsService";
+import { ContactsService } from "../generated/services/ContactsService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
@@ -23,6 +24,7 @@ import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
 import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_generationstocoachesesModel";
+
 import {
   unwrapOrThrow,
   unwrap,
@@ -32,6 +34,7 @@ import {
 import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
+import type { Contacts } from "../generated/models/ContactsModel";
 
 interface DataContextValue {
   coachName: string | null;
@@ -218,80 +221,107 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   ]);
 
   useEffect(() => {
-    setError(null);
+  setError(null);
 
-    // Fetch logged-in user info, then resolve their coach record by ID
-    getContext()
-      .then(async (ctx) => {
-        const fullName = ctx.user.fullName;
-        const userId = ctx.user.objectId;
-        console.log("[CoachPortal] Logged IN found:", userId);
-        if (!fullName) return;
+  getContext()
+    .then(async (ctx) => {
+      const fullName = ctx.user.fullName;
+      const email = ctx.user.userPrincipalName;
+
+      console.log("[CoachPortal] Logged-in user:", {
+        fullName,
+        email,
+        objectId: ctx.user.objectId,
+      });
+
+      if (fullName) {
         setCoachName(fullName);
-        const res = await Cr9be_coachsService.getAll({
+      }
+
+      if (!email) {
+        console.error("[CoachPortal] No email found for logged-in user.");
+        return;
+      }
+
+      try {
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const contactRes = await ContactsService.getAll({
+          filter: `emailaddress1 eq '${normalizedEmail}'`,
+        });
+
+        const contacts = unwrap<Contacts>(contactRes);
+
+        console.log("[CoachPortal] Contacts found:", contacts);
+
+        const contact = contacts.find(
+          (c) =>
+            (c.emailaddress1 ?? "").trim().toLowerCase() ===
+            normalizedEmail
+        );
+
+        if (!contact) {
+          console.error(
+            "[CoachPortal] No Contact found for email:",
+            email
+          );
+
+          return;
+        }
+
+        const contactId = contact.contactid;
+
+        console.log(
+          "[CoachPortal] Contact found:",
+          contactId,
+          contact.fullname
+        );
+
+
+        const coachRes = await Cr9be_coachsService.getAll({
           filter: "statecode eq 0",
         });
-
-        const coaches = unwrap<Cr9be_coachs>(res);
-
-        const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
-
-        const match = coaches.find((coach) => {
-           const fullCoachName = `${coach.cr9be_name ?? ""} ${
-             coach.cr9be_surname ?? ""
-           }`.trim();
-          return norm(fullCoachName) === norm(fullName);
-        });
-
-        if (match) {
-          console.log("[CoachPortal] Coach found:", match);
-          console.log("[CoachPortal] Coach ID:", match.cr9be_coachid);
-
-          setLoggedInCoachId(match.cr9be_coachid);
-        }
-        // Load coaches and find the one whose contact name matches the logged-in user
-        try {
-          const res = await Cr9be_coachsService.getAll({
-            filter: "statecode eq 0",
-          });
-          const coaches = unwrap<Cr9be_coachs>(res);
-          const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
-          const match = coaches.find(
-            (c) =>
-              norm(c.cr9be_contactname) === norm(fullName) ||
-              norm(`${c.cr9be_name ?? ""} ${c.cr9be_surname ?? ""}`.trim()) ===
-                norm(fullName) ||
-              norm(c.cr9be_name) === norm(fullName)
+        const coaches = unwrap<Cr9be_coachs>(coachRes);
+        const coach = coaches.find(
+          (c) =>
+            (c as any)._cr9be_contact_value?.toLowerCase() ===
+            contactId?.toLowerCase()
+        );
+        
+        if (!coach) {
+          console.error(
+            "[CoachPortal] No Coach found for Contact:",
+            contactId
           );
-          if (match) {
-            console.log(
-              "[CoachPortal] Matched coach:",
-              match.cr9be_name,
-              match.cr9be_coachid
-            );
-            setCoachId(match.cr9be_coachid);
-          }
-        } catch {}
-      })
-      .catch(() => {});
 
-    // Priority: players + events first (home screen needs them)
-    // Attendances deferred - not shown on home screen
-    Promise.all([refreshPlayers(), refreshEvents(), refreshInvoices()])
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load data")
-      )
-      .finally(() => setLoading(false));
+          return;
+        }
 
-    // Attendances, facilities, performances, generations load in background after primary data
-    refreshAttendances().catch(() => {});
-    refreshFacilities().catch((err) => {
-      console.error("[CoachPortal] Facilities load failed:", err);
+        console.log("[CoachPortal] Coach found:", coach);
+        console.log(
+          "[CoachPortal] Coach ID:",
+          coach.cr9be_coachid
+        );
+
+        // This is the important ID used everywhere else
+        setCoachId(coach.cr9be_coachid);
+        setLoggedInCoachId(coach.cr9be_coachid);
+
+      } catch (err) {
+        console.error(
+          "[CoachPortal] Failed to resolve Contact → Coach:",
+          err
+        );
+      }
+    })
+    .catch((err) => {
+      console.error(
+        "[CoachPortal] Failed to get logged-in user:",
+        err
+      );
     });
-    refreshPerformances().catch(() => {});
-    refreshGenerations().catch(() => {});
-    refreshGenerationsToCoaches().catch(() => {});
-  }, []);
+
+}, []);
 
   return (
     <DataContext.Provider
