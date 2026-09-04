@@ -168,6 +168,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const latestTactical = latestPerf?.axm365_tacticalawareness ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
   const latestTeamPlay = latestPerf?.axm365_teamplay ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
 
+  // Latest coach's note — trimmed so a whitespace-only note doesn't render an empty card.
+  const latestNotes = latestPerf?.axm365_notes?.trim();
+
   const sortedEvents = useMemo(() => {
     const now = new Date();
     // Event picker shows last week's events only — days -8 through -2, excluding
@@ -494,6 +497,44 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               <AttributeBar label="Tactical Awareness" value={latestTactical} />
               <AttributeBar label="Team Play" value={latestTeamPlay} />
             </div>
+
+            {/* Latest coach's note — only the single most recent one, matching the
+                "Latest" scope used by the rating and attribute bars above. */}
+            {latestNotes && (
+              <div style={{ marginTop: 18 }}>
+                <SectionTitle eyebrow="Latest Performance" title="Coach's Note" />
+                <div
+                  style={{
+                    marginTop: 12,
+                    background: COLORS.cream,
+                    border: `1px solid ${COLORS.line}`,
+                    borderRadius: 14,
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                    {latestNotes}
+                  </div>
+                  {latestPerf?.createdon && (
+                    <div
+                      style={{
+                        fontFamily: monoStack,
+                        fontSize: 9.5,
+                        color: COLORS.mute,
+                        letterSpacing: "0.1em",
+                        marginTop: 8,
+                      }}
+                    >
+                      {new Date(latestPerf.createdon).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
