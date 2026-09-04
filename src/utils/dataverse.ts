@@ -10,7 +10,32 @@ export interface Facility {
 
 // Org URL of the environment (from `pac env who`); the generic Dataverse
 // connector needs it because the connection has no default organization.
-const DATAVERSE_ORG_URL = "https://org2560bf82.crm4.dynamics.com/";
+export const DATAVERSE_ORG_URL = "https://org2560bf82.crm4.dynamics.com/";
+
+/** Security role names (e.g. "Back office") assigned to the Dataverse
+ *  systemuser matching the given Azure AD object id. Uses the standard
+ *  out-of-box systemuser <-> role relationship, "systemuserroles_association". */
+export async function fetchUserSecurityRoles(azureObjectId: string): Promise<string[]> {
+  const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
+    DATAVERSE_ORG_URL,
+    "systemusers",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "systemuserid",
+    `azureactivedirectoryobjectid eq '${azureObjectId}'`,
+    undefined,
+    "systemuserroles_association($select=name)"
+  );
+  if (!res.success) {
+    const msg = (res.error as any)?.message ?? "Failed to load security roles";
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  const data = res.data as Record<string, unknown> | undefined;
+  const users = (data?.value ?? []) as any[];
+  return users.flatMap((u) => (u.systemuserroles_association ?? []) as any[]).map((r) => (r?.name as string) ?? "").filter(Boolean);
+}
 
 function toFacilities(items: any[]): Facility[] {
   return items

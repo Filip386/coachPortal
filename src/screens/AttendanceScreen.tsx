@@ -35,6 +35,7 @@ import {
 } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
+import { isEventActive } from "../utils/eventStatus";
 
 type AttendanceMark = "present" | "late" | "absent";
 
@@ -77,6 +78,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     performances,
     coachName,
     coachId,
+    isBackOffice,
     loading,
     error,
     refreshAttendances,
@@ -131,6 +133,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   // throughout the JSX.
   const isCurrentEventClockedIn =
     clockedIn && !!clockedInEventId && clockedInEventId === selectedEventId;
+
+  // ============================================================
+  // ROLE-BASED EDIT LOCK
+  // Basic coaches can only mark attendance / clock in / rate players
+  // for today's event. Back office can edit any event, past or present.
+  // ============================================================
+
+  const selectedEvent = useMemo(
+    () => events.find((e) => e.axm365_eventid === selectedEventId) ?? null,
+    [events, selectedEventId]
+  );
+
+  const locked = !!selectedEvent && !isBackOffice && !isEventActive(selectedEvent);
+
+  const LOCKED_MESSAGE =
+    "Past sessions are locked. Only Back office can mark attendance or clock in for a past event.";
 
   // ============================================================
   // PERFORMANCE EDIT MODAL STATE
@@ -495,6 +513,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
+    if (locked) {
+      setPerfSaveError(LOCKED_MESSAGE);
+      return;
+    }
+
     setPerfSaving(true);
     setPerfSaveError(null);
 
@@ -735,6 +758,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
+    if (locked) {
+      setClockError(LOCKED_MESSAGE);
+
+      return;
+    }
+
     if (!coachId) {
       setClockError("Coach information is missing.");
 
@@ -897,6 +926,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setSaveSuccess(false);
     setWriteError(null);
 
+    if (locked) {
+      setWriteError(LOCKED_MESSAGE);
+      return;
+    }
+
     if (shownPlayers.length === 0) {
       setWriteError("No players to save for this generation.");
 
@@ -964,10 +998,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   // ============================================================
   // SELECTED EVENT
   // ============================================================
-
-  const selectedEvent = events.find(
-    (e) => e.axm365_eventid === selectedEventId
-  );
 
   const eventName = selectedEvent ? selectedEvent.axm365_name : "Select Event";
 
@@ -1133,7 +1163,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             >
               <button
                 onClick={handleClockInOut}
-                disabled={clockSaving}
+                disabled={clockSaving || locked}
+                title={locked ? LOCKED_MESSAGE : undefined}
                 style={{
                   flex: 1,
                   height: 42,
@@ -1163,9 +1194,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
                   letterSpacing: "0.13em",
 
-                  cursor: clockSaving ? "not-allowed" : "pointer",
+                  cursor: clockSaving || locked ? "not-allowed" : "pointer",
 
-                  opacity: clockSaving ? 0.65 : 1,
+                  opacity: clockSaving ? 0.65 : locked ? 0.45 : 1,
 
                   transition: "all 0.2s ease",
 
@@ -1602,6 +1633,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                           display: "flex",
                           gap: 6,
                           flexShrink: 0,
+                          opacity: locked ? 0.5 : 1,
+                          pointerEvents: locked ? "none" : undefined,
                         }}
                       >
                         <MarkBtn
@@ -1625,19 +1658,23 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 })}
             </div>
 
+            {locked && (
+              <ErrorBanner message={LOCKED_MESSAGE} />
+            )}
+
             <button
-              disabled={saving}
+              disabled={saving || locked}
               style={{
                 marginTop: 18,
                 width: "100%",
                 padding: "14px 0",
-                background: saving ? COLORS.mute : COLORS.navy,
+                background: saving || locked ? COLORS.mute : COLORS.navy,
                 color: "#fff",
                 border: 0,
                 borderRadius: 14,
                 fontSize: 14,
                 fontWeight: 700,
-                cursor: saving ? "not-allowed" : "pointer",
+                cursor: saving || locked ? "not-allowed" : "pointer",
                 letterSpacing: "0.02em",
                 display: "flex",
                 alignItems: "center",
@@ -1655,7 +1692,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 />
               )}
 
-              {saving ? "Saving…" : "Save Attendance →"}
+              {locked ? "Locked" : saving ? "Saving…" : "Save Attendance →"}
             </button>
           </div>
         )}
@@ -2435,6 +2472,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         display: "flex",
                         gap: 8,
                         alignItems: "center",
+                        opacity: locked ? 0.5 : 1,
+                        pointerEvents: locked ? "none" : undefined,
                       }}
                     >
                       {[1, 2, 3, 4, 5].map((n) => (
@@ -2511,6 +2550,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         display: "flex",
                         flexDirection: "column",
                         gap: 14,
+                        opacity: locked ? 0.5 : 1,
+                        pointerEvents: locked ? "none" : undefined,
                       }}
                     >
                       <AttributeSlider
@@ -2565,6 +2606,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                       <textarea
                         value={editNotes}
                         onChange={(e) => setEditNotes(e.target.value)}
+                        disabled={locked}
                         placeholder={`Notes for ${
                           perfEditPlayer?.cr9be_name ?? "player"
                         }…`}
@@ -2584,19 +2626,23 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   </div>
 
+                  {locked && (
+                    <ErrorBanner message={LOCKED_MESSAGE} />
+                  )}
+
                   <button
-                    disabled={perfSaving}
+                    disabled={perfSaving || locked}
                     onClick={savePerfData}
                     style={{
                       width: "100%",
                       padding: "14px 0",
-                      background: perfSaving ? COLORS.mute : COLORS.navy,
+                      background: perfSaving || locked ? COLORS.mute : COLORS.navy,
                       color: "#fff",
                       border: 0,
                       borderRadius: 14,
                       fontSize: 14,
                       fontWeight: 700,
-                      cursor: perfSaving ? "not-allowed" : "pointer",
+                      cursor: perfSaving || locked ? "not-allowed" : "pointer",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -2612,7 +2658,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                       />
                     )}
 
-                    {perfSaving ? "Saving…" : "Save Performance →"}
+                    {locked ? "Locked" : perfSaving ? "Saving…" : "Save Performance →"}
                   </button>
                 </div>
               </div>

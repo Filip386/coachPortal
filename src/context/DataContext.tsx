@@ -33,6 +33,7 @@ import {
   unwrap,
   fetchAllPages,
   fetchFacilities,
+  fetchUserSecurityRoles,
 } from "../utils/dataverse";
 
 import type { Facility } from "../utils/dataverse";
@@ -44,6 +45,12 @@ import type { Contacts } from "../generated/models/ContactsModel";
 interface DataContextValue {
   coachName: string | null;
   coachId: string | null;
+
+  /** True once the signed-in user's Dataverse security roles have been
+   *  checked for "Back office" membership. False (most restrictive) until
+   *  resolved or if the lookup fails. */
+  isBackOffice: boolean;
+  rolesLoaded: boolean;
 
   players: Cr9be_players[];
   events: Axm365_events[];
@@ -115,6 +122,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [coachId, setCoachId] =
     useState<string | null>(null);
+
+  const [isBackOffice, setIsBackOffice] = useState(false);
+
+  const [rolesLoaded, setRolesLoaded] = useState(false);
 
 
   const [players, setPlayers] = useState<Cr9be_players[]>(() =>
@@ -474,6 +485,43 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
 
+        // -------------------------------------------------
+        // Security role check (Back office vs Basic coach)
+        // Independent of the Contact/Coach resolution below,
+        // since Back office staff may not have a Coach record.
+        // -------------------------------------------------
+
+        if (ctx.user.objectId) {
+
+          try {
+
+            const roles = await fetchUserSecurityRoles(ctx.user.objectId);
+
+            console.log("[CoachPortal] Security roles:", roles);
+
+            const normalized = roles.map((r) => r.trim().toLowerCase());
+
+            setIsBackOffice(normalized.some((r) => r.includes("back office")));
+
+          } catch (err) {
+
+            console.error("[CoachPortal] Failed to resolve security roles:", err);
+
+            setIsBackOffice(false);
+
+          } finally {
+
+            setRolesLoaded(true);
+
+          }
+
+        } else {
+
+          setRolesLoaded(true);
+
+        }
+
+
         // Make sure we have an email
         if (!email) {
 
@@ -649,6 +697,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         coachName,
 
         coachId,
+
+        isBackOffice,
+
+        rolesLoaded,
 
         loggedInCoachId,
 
