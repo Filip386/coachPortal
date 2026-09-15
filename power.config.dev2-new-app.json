@@ -1,17 +1,17 @@
 {
   "version": "1.0",
-  "appId": "e6ec3fbd-0392-4880-afa4-ac602e427c2b",
-  "appDisplayName": "Coach App",
+  "appId": "bf63f2f6-6446-4215-873a-9a09310ca6ae",
+  "appDisplayName": "Coach App - Dev2",
   "region": "prod",
   "appType": "CodeApp",
-  "environmentId": "3f82e4f3-c7ef-ee18-9d6e-bf3520b90558",
+  "environmentId": "5739f44a-0323-ec6a-9e6c-9795cc60af4c",
   "description": " ",
   "buildPath": "./dist",
   "buildEntryPoint": "index.html",
   "localAppUrl": "http://localhost:3000",
   "logoPath": "Default",
   "connectionReferences": {
-    "a870a377-3546-4f32-91d5-17995678e230": {
+    "58c3a794-543a-439c-9b41-da7bc200a521": {
       "id": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
       "displayName": "Microsoft Dataverse",
       "dataSources": [
