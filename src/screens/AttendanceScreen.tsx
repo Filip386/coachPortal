@@ -78,6 +78,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     performances,
     coachName,
     coachId,
+    coachLookupLoading,
+    coachLookupError,
     isBackOffice,
     loading,
     error,
@@ -119,8 +121,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [clockSaving, setClockSaving] = useState(false);
 
   const [clockError, setClockError] = useState<string | null>(null);
-
-  const [clockStartTime, setClockStartTime] = useState<number | null>(null);
 
   // IMPORTANT:
   // This tells us WHICH EVENT the current clock session belongs to.
@@ -440,8 +440,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
         setCoachAttendanceId(session.coachAttendanceId);
 
-        setClockStartTime(session.clockStartTime);
-
         setClockedInEventId(session.eventId);
 
         console.log("[Clock] Restored clock session:", {
@@ -636,19 +634,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
-  // ============================================================
-  // FORMAT CLOCK-IN TIME
-  //
-  // There is no clock-out — this simply formats the persisted
-  // clock-in timestamp so it displays correctly after a refresh
-  // or app reopen, without needing a running timer.
-  // ============================================================
-
-  const formatClockInTime = (timestamp: number) =>
-    new Date(timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
 
   // ============================================================
   // CLOCK IN (no clock-out — a coach only ever clocks in)
@@ -678,7 +663,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
 
     if (!coachId) {
-      setClockError("Coach information is missing.");
+      // Distinguish "still resolving" from "genuinely no linked Coach
+      // record" — surfacing the specific reason (from the email → Contact →
+      // Coach lookup in DataContext) instead of a generic message, so a
+      // real data-setup gap (e.g. no Contact for this email, or no Coach
+      // linked to it) is diagnosable from the error itself.
+      setClockError(
+        coachLookupLoading
+          ? "Still loading your coach profile — please wait a moment and try again."
+          : coachLookupError ?? "Coach information is missing."
+      );
 
       return;
     }
@@ -765,8 +759,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       setClockedInEventId(selectedEventId);
 
       setClockedIn(true);
-
-      setClockStartTime(startTime);
 
       // IMPORTANT:
       // Save eventId and coachId so we know which event/coach this active
@@ -1050,158 +1042,111 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 width: "100%",
               }}
             >
-              <button
-                onClick={handleClockInOut}
-                disabled={clockSaving || locked || isCurrentEventClockedIn}
-                title={locked ? LOCKED_MESSAGE : undefined}
-                style={{
-                  flex: 1,
-                  height: 42,
-                  padding: "0 16px",
-
-                  background: clockSaving
-                    ? "rgba(255,255,255,0.06)"
-                    : isCurrentEventClockedIn
-                    ? "rgba(34, 197, 94, 0.18)"
-                    : "rgba(255,255,255,0.10)",
-
-                  color: isCurrentEventClockedIn ? "#fff" : COLORS.yellow,
-
-                  border: `1px solid ${
-                    isCurrentEventClockedIn
-                      ? "rgba(34,197,94,0.55)"
-                      : "rgba(255,255,255,0.20)"
-                  }`,
-
-                  borderRadius: 12,
-
-                  fontFamily: monoStack,
-
-                  fontSize: 10,
-
-                  fontWeight: 700,
-
-                  letterSpacing: "0.13em",
-
-                  cursor:
-                    clockSaving || locked || isCurrentEventClockedIn
-                      ? "not-allowed"
-                      : "pointer",
-
-                  opacity: clockSaving ? 0.65 : locked ? 0.45 : 1,
-
-                  transition: "all 0.2s ease",
-
-                  display: "flex",
-
-                  alignItems: "center",
-
-                  justifyContent: "center",
-
-                  gap: 8,
-
-                  boxShadow: isCurrentEventClockedIn
-                    ? "0 4px 14px rgba(34,197,94,0.18)"
-                    : "none",
-                }}
-              >
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-
-                    background: isCurrentEventClockedIn
-                      ? "#22C55E"
-                      : COLORS.yellow,
-
-                    boxShadow: isCurrentEventClockedIn
-                      ? "0 0 0 4px rgba(34,197,94,0.12)"
-                      : "0 0 0 4px rgba(255,214,0,0.08)",
-
-                    flexShrink: 0,
-                  }}
-                />
-
-                {clockSaving
-                  ? "SAVING..."
-                  : isCurrentEventClockedIn
-                  ? "CLOCKED IN"
-                  : "CLOCK IN"}
-              </button>
-
-              <div
-                style={{
-                  height: 42,
-                  minWidth: 105,
-                  padding: "0 14px",
-                  boxSizing: "border-box",
-
-                  background: isCurrentEventClockedIn
-                    ? "rgba(255,255,255,0.12)"
-                    : "rgba(255,255,255,0.06)",
-
-                  border: "1px solid rgba(255,255,255,0.16)",
-
-                  borderRadius: 12,
-
-                  display: "flex",
-
-                  flexDirection: "column",
-
-                  alignItems: "center",
-
-                  justifyContent: "center",
-
-                  transition: "all 0.2s ease",
-                }}
-              >
+              {isCurrentEventClockedIn ? (
+                // No time shown here — the clock-in moment is only ever
+                // recorded in the background (axm365_clockin), never
+                // surfaced as a running clock in the UI.
                 <div
                   style={{
+                    flex: 1,
+                    height: 42,
+                    padding: "0 16px",
+
+                    background: "rgba(34, 197, 94, 0.18)",
+
+                    color: "#fff",
+
+                    border: "1px solid rgba(34,197,94,0.55)",
+
+                    borderRadius: 12,
+
                     fontFamily: monoStack,
 
-                    fontSize: 7,
-
-                    fontWeight: 600,
-
-                    letterSpacing: "0.16em",
-
-                    color: isCurrentEventClockedIn
-                      ? "rgba(255,255,255,0.55)"
-                      : "rgba(255,255,255,0.35)",
-
-                    lineHeight: 1,
-
-                    marginBottom: 4,
-                  }}
-                >
-                  CLOCKED IN AT
-                </div>
-
-                <div
-                  style={{
-                    fontFamily: monoStack,
-
-                    fontSize: 13,
+                    fontSize: 10,
 
                     fontWeight: 700,
 
-                    letterSpacing: "0.08em",
+                    letterSpacing: "0.13em",
 
-                    lineHeight: 1,
+                    display: "flex",
 
-                    color: isCurrentEventClockedIn
-                      ? COLORS.yellow
-                      : "rgba(255,255,255,0.45)",
+                    alignItems: "center",
 
-                    fontVariantNumeric: "tabular-nums",
+                    justifyContent: "center",
+
+                    gap: 8,
+
+                    boxShadow: "0 4px 14px rgba(34,197,94,0.18)",
                   }}
                 >
-                  {isCurrentEventClockedIn && clockStartTime
-                    ? formatClockInTime(clockStartTime)
-                    : "--:--"}
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: "#22C55E",
+                      boxShadow: "0 0 0 4px rgba(34,197,94,0.12)",
+                      flexShrink: 0,
+                    }}
+                  />
+                  YOU ARE CLOCKED IN
                 </div>
-              </div>
+              ) : (
+                <button
+                  onClick={handleClockInOut}
+                  disabled={clockSaving || locked}
+                  title={locked ? LOCKED_MESSAGE : undefined}
+                  style={{
+                    flex: 1,
+                    height: 42,
+                    padding: "0 16px",
+
+                    background: clockSaving
+                      ? "rgba(255,255,255,0.06)"
+                      : "rgba(255,255,255,0.10)",
+
+                    color: COLORS.yellow,
+
+                    border: "1px solid rgba(255,255,255,0.20)",
+
+                    borderRadius: 12,
+
+                    fontFamily: monoStack,
+
+                    fontSize: 10,
+
+                    fontWeight: 700,
+
+                    letterSpacing: "0.13em",
+
+                    cursor: clockSaving || locked ? "not-allowed" : "pointer",
+
+                    opacity: clockSaving ? 0.65 : locked ? 0.45 : 1,
+
+                    transition: "all 0.2s ease",
+
+                    display: "flex",
+
+                    alignItems: "center",
+
+                    justifyContent: "center",
+
+                    gap: 8,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: COLORS.yellow,
+                      boxShadow: "0 0 0 4px rgba(255,214,0,0.08)",
+                      flexShrink: 0,
+                    }}
+                  />
+                  {clockSaving ? "SAVING..." : "CLOCK IN"}
+                </button>
+              )}
             </div>
           </div>
 

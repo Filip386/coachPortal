@@ -10,6 +10,9 @@ export function getInvoiceStatus(inv: Invoices): InvoiceStatus {
     (inv as any).statuscode === 100001 || (inv as any).statuscode === "100001";
   if (isPaid) return "Paid";
   const due = inv.duedate ? new Date(inv.duedate) : null;
-  if (due && due < new Date()) return "Overdue";
+  // Still open with no due date at all — there's no future date to justify
+  // "Due Soon", so surface it as Overdue instead of silently hiding it.
+  if (!due) return "Overdue";
+  if (due < new Date()) return "Overdue";
   return "Due Soon";
 }

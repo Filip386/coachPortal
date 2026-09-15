@@ -46,6 +46,16 @@ interface DataContextValue {
   coachName: string | null;
   coachId: string | null;
 
+  /** True until the signed-in user's email → Contact → Coach lookup has
+   *  finished (success or failure). Lets callers tell "still resolving"
+   *  apart from "genuinely has no linked Coach record". */
+  coachLookupLoading: boolean;
+
+  /** Specific reason the Contact → Coach lookup didn't resolve a coachId
+   *  (e.g. no Dataverse contact for the signed-in email, or no Coach record
+   *  linked to that contact) — null once resolved or while still pending. */
+  coachLookupError: string | null;
+
   /** True once the signed-in user's Dataverse security roles have been
    *  checked for "Back office" membership. False (most restrictive) until
    *  resolved or if the lookup fails. */
@@ -122,6 +132,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [coachId, setCoachId] =
     useState<string | null>(null);
+
+  const [coachLookupLoading, setCoachLookupLoading] = useState(true);
+
+  const [coachLookupError, setCoachLookupError] = useState<string | null>(null);
 
   const [isBackOffice, setIsBackOffice] = useState(false);
 
@@ -358,11 +372,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // ---------------------------------------------------------
   // REFRESH EVERYTHING
+  //
+  // Uses allSettled instead of all: a security role that simply isn't
+  // granted read access to one table (e.g. a Basic coach without Invoices
+  // access) must not break Home/Calendar/Attendance/Squad for that user —
+  // Promise.all would reject the whole batch on that single failure and
+  // surface a blocking "An unknown error occurred" banner even though the
+  // other seven fetches succeeded fine. Only treat it as a real, app-wide
+  // failure (and surface the error banner) when every single fetch failed,
+  // which points to something fundamental (network/auth) rather than a
+  // per-table permission gap.
   // ---------------------------------------------------------
 
   const refreshAll = useCallback(async () => {
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       refreshPlayers(),
       refreshEvents(),
       refreshAttendances(),
@@ -372,6 +396,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       refreshGenerations(),
       refreshGenerationsToCoaches(),
     ]);
+
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult => r.status === "rejected"
+    );
+
+    failures.forEach((f) =>
+      console.error(
+        "[CoachPortal] A background data refresh failed:",
+        f.reason
+      )
+    );
+
+    if (failures.length > 0 && failures.length === results.length) {
+
+      const reason = failures[0].reason;
+
+      setError(
+        reason instanceof Error ? reason.message : "Failed to load data."
+      );
+
+      return;
+    }
+
+    setError(null);
 
   }, [
     refreshPlayers,
@@ -412,23 +460,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       try {
 
         await refreshAll();
-
-      } catch (err) {
-
-        console.error(
-          "[CoachPortal] Data load failed:",
-          err
-        );
-
-        if (!cancelled) {
-
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to load data."
-          );
-
-        }
 
       } finally {
 
@@ -539,6 +570,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             "[CoachPortal] No email found for logged-in user."
           );
 
+          setCoachLookupError(
+            "Your signed-in account has no email address — a Coach record can't be matched."
+          );
+
+          setCoachLookupLoading(false);
+
           return;
 
         }
@@ -592,6 +629,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
               email
             );
 
+            setCoachLookupError(
+              `No Dataverse contact found for ${email}.`
+            );
+
+            setCoachLookupLoading(false);
+
             return;
 
           }
@@ -641,6 +684,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
               contactId
             );
 
+            setCoachLookupError(
+              `No Coach record is linked to ${
+                contact.fullname ?? "your contact"
+              } in Dataverse.`
+            );
+
+            setCoachLookupLoading(false);
+
             return;
 
           }
@@ -671,12 +722,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             coach.cr9be_coachid
           );
 
+          setCoachLookupError(null);
+
+          setCoachLookupLoading(false);
+
         } catch (err) {
 
           console.error(
             "[CoachPortal] Failed to resolve Contact → Coach:",
             err
           );
+
+          setCoachLookupError(
+            err instanceof Error
+              ? err.message
+              : "Failed to look up your Coach record."
+          );
+
+          setCoachLookupLoading(false);
 
         }
 
@@ -689,6 +752,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           "[CoachPortal] Failed to get logged-in user:",
           err
         );
+
+        setCoachLookupError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load your account information."
+        );
+
+        setCoachLookupLoading(false);
 
       });
 
@@ -707,6 +778,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         coachName,
 
         coachId,
+
+        coachLookupLoading,
+
+        coachLookupError,
 
         isBackOffice,
 
