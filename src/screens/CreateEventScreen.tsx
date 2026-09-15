@@ -86,9 +86,14 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
     try {
       setSaving(true);
       setError(null);
+      // Sent as an explicit UTC instant (not a bare "YYYY-MM-DDTHH:mm:ss"
+      // string) so Dataverse can't interpret the local date/time typed here
+      // as a different moment than intended — a mismatch that showed up as
+      // the created event landing on the wrong day/time.
+      const localDateTime = new Date(`${date}T${time}:00`);
       await Axm365_eventsService.create({
         axm365_name: finalTitle,
-        axm365_eventdate: `${date}T${time}:00`,
+        axm365_eventdate: localDateTime.toISOString(),
         axm365_eventtype: typeCode as any,
         ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
       } as any);

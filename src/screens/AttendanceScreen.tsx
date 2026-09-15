@@ -122,8 +122,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const [clockStartTime, setClockStartTime] = useState<number | null>(null);
 
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
   // IMPORTANT:
   // This tells us WHICH EVENT the current clock session belongs to.
   const [clockedInEventId, setClockedInEventId] = useState<string | null>(null);
@@ -428,32 +426,35 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       console.log("[Clock] Stored session:", session);
 
-      // We require eventId as well.
+      // Require eventId, and require the session's coachId to match the
+      // signed-in coach — otherwise one coach's active clock-in could leak
+      // into another coach's session on a shared/handed-off device.
       if (
         session?.clockedIn &&
         session?.coachAttendanceId &&
         session?.clockStartTime &&
-        session?.eventId
+        session?.eventId &&
+        session?.coachId === coachId
       ) {
-        const elapsed = Math.floor(
-          (Date.now() - session.clockStartTime) / 1000
-        );
-
         setClockedIn(true);
 
         setCoachAttendanceId(session.coachAttendanceId);
 
         setClockStartTime(session.clockStartTime);
 
-        setElapsedSeconds(Math.max(0, elapsed));
-
         setClockedInEventId(session.eventId);
 
         console.log("[Clock] Restored clock session:", {
           eventId: session.eventId,
           coachAttendanceId: session.coachAttendanceId,
-          elapsed,
         });
+      } else if (session?.coachId && session.coachId !== coachId) {
+        // coachId may just not have resolved yet — the effect re-runs once
+        // it does, so this isn't necessarily a real mismatch. Don't touch
+        // storage here; only an actual mismatch (checked above) matters.
+        console.log(
+          "[Clock] Stored session's coach doesn't match the current coach (yet)."
+        );
       } else {
         console.log("[Clock] Stored session is incomplete.");
 
@@ -464,7 +465,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       localStorage.removeItem(CLOCK_STORAGE_KEY);
     }
-  }, []);
+  }, [coachId]);
 
   // ============================================================
   // PERFORMANCE RATING HANDLERS
@@ -636,109 +637,21 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   };
 
   // ============================================================
-  // CLOCK TIMER
+  // FORMAT CLOCK-IN TIME
+  //
+  // There is no clock-out — this simply formats the persisted
+  // clock-in timestamp so it displays correctly after a refresh
+  // or app reopen, without needing a running timer.
   // ============================================================
 
-  useEffect(() => {
-    if (!clockedIn || !clockStartTime) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      const elapsed = Math.floor((Date.now() - clockStartTime) / 1000);
-
-      setElapsedSeconds(elapsed);
-    }, 1000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [clockedIn, clockStartTime]);
+  const formatClockInTime = (timestamp: number) =>
+    new Date(timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   // ============================================================
-  // AUTO CLOCK OUT AFTER 9 HOURS
-  // ============================================================
-
-  useEffect(() => {
-    if (!clockedIn || !clockStartTime || !coachAttendanceId) {
-      return;
-    }
-
-    const AUTO_CLOCK_OUT_SECONDS = 9 * 60 * 60;
-
-    const checkAutoClockOut = async () => {
-      const elapsed = Math.floor((Date.now() - clockStartTime) / 1000);
-
-      if (elapsed >= AUTO_CLOCK_OUT_SECONDS) {
-        console.log("[Clock] 9 hours reached. Automatically clocking out...");
-
-        try {
-          setClockSaving(true);
-          setClockError(null);
-
-          const res = await Axm365_eventcoachattendancesService.update(
-            coachAttendanceId,
-            {
-              axm365_clockout: new Date(),
-            } as any
-          );
-
-          throwIfError(res, "Automatic Clock Out");
-
-          setClockedIn(false);
-
-          setCoachAttendanceId(null);
-
-          setClockedInEventId(null);
-
-          setClockStartTime(null);
-
-          setElapsedSeconds(AUTO_CLOCK_OUT_SECONDS);
-
-          localStorage.removeItem(CLOCK_STORAGE_KEY);
-
-          console.log("[Clock] Automatic clock out completed.");
-        } catch (err) {
-          console.error("[Clock] Automatic clock out failed:", err);
-
-          setClockError(
-            err instanceof Error ? err.message : "Automatic clock out failed."
-          );
-        } finally {
-          setClockSaving(false);
-        }
-      }
-    };
-
-    const interval = window.setInterval(checkAutoClockOut, 1000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [clockedIn, clockStartTime, coachAttendanceId]);
-
-  // ============================================================
-  // FORMAT TIMER
-  // ============================================================
-
-  const formatElapsedTime = (totalSeconds: number) => {
-    const hours = Math.floor(totalSeconds / 3600);
-
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-    const seconds = totalSeconds % 60;
-
-    return [
-      hours.toString().padStart(2, "0"),
-
-      minutes.toString().padStart(2, "0"),
-
-      seconds.toString().padStart(2, "0"),
-    ].join(":");
-  };
-
-  // ============================================================
-  // CLOCK IN / CLOCK OUT
+  // CLOCK IN (no clock-out — a coach only ever clocks in)
   // ============================================================
 
   const handleClockInOut = async () => {
@@ -770,15 +683,28 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
+    // Already clocked in for this event — there is no clock-out action,
+    // so this is a no-op (the button is also disabled in this state).
+    if (isCurrentEventClockedIn) {
+      return;
+    }
+
     // ==========================================================
     // IMPORTANT:
-    // If already clocked into Event A and user selected Event B,
-    // do NOT create another attendance record.
+    // Only one active clock-in session at a time. If already clocked
+    // into Event A and the user selected Event B, block a second
+    // attendance record instead of overwriting the active session.
     // ==========================================================
 
     if (clockedIn && clockedInEventId && clockedInEventId !== selectedEventId) {
+      const otherEvent = events.find(
+        (e) => e.axm365_eventid === clockedInEventId
+      );
+
       setClockError(
-        "You are already clocked in for another event. Please clock out first."
+        `You are already clocked in for ${
+          otherEvent?.axm365_name ?? "another event"
+        }. Only one clock-in session is allowed at a time.`
       );
 
       return;
@@ -788,42 +714,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setClockError(null);
 
     try {
-      // ========================================================
-      // CLOCK OUT
-      // ========================================================
-
-      if (clockedIn && coachAttendanceId) {
-        console.log("[Clock] Clocking OUT:", {
-          attendanceId: coachAttendanceId,
-          eventId: clockedInEventId,
-        });
-
-        const res = await Axm365_eventcoachattendancesService.update(
-          coachAttendanceId,
-          {
-            axm365_clockout: new Date(),
-          } as any
-        );
-
-        throwIfError(res, "Clock Out");
-
-        setClockedIn(false);
-
-        setCoachAttendanceId(null);
-
-        setClockedInEventId(null);
-
-        setClockStartTime(null);
-
-        setElapsedSeconds(0);
-
-        localStorage.removeItem(CLOCK_STORAGE_KEY);
-
-        console.log("[Clock] Clock OUT completed.");
-
-        return;
-      }
-
       // ========================================================
       // CLOCK IN
       // ========================================================
@@ -878,11 +768,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       setClockStartTime(startTime);
 
-      setElapsedSeconds(0);
-
       // IMPORTANT:
-      // Save eventId so we know which event is active
-      // even after switching events or refreshing the page.
+      // Save eventId and coachId so we know which event/coach this active
+      // session belongs to, even after switching events, refreshing the
+      // page, or reopening the app.
       localStorage.setItem(
         CLOCK_STORAGE_KEY,
         JSON.stringify({
@@ -904,10 +793,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         coachId,
       });
     } catch (err) {
-      console.error("[Clock] Clock In/Out failed:", err);
+      console.error("[Clock] Clock In failed:", err);
 
       setClockError(
-        err instanceof Error ? err.message : "Clock In/Out failed."
+        err instanceof Error ? err.message : "Clock In failed."
       );
     } finally {
       setClockSaving(false);
@@ -1149,7 +1038,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </h1>
 
             {/* =================================================
-                CLOCK IN / CLOCK OUT
+                CLOCK IN
             ================================================= */}
 
             <div
@@ -1163,7 +1052,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             >
               <button
                 onClick={handleClockInOut}
-                disabled={clockSaving || locked}
+                disabled={clockSaving || locked || isCurrentEventClockedIn}
                 title={locked ? LOCKED_MESSAGE : undefined}
                 style={{
                   flex: 1,
@@ -1173,14 +1062,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   background: clockSaving
                     ? "rgba(255,255,255,0.06)"
                     : isCurrentEventClockedIn
-                    ? "rgba(220, 38, 38, 0.18)"
+                    ? "rgba(34, 197, 94, 0.18)"
                     : "rgba(255,255,255,0.10)",
 
                   color: isCurrentEventClockedIn ? "#fff" : COLORS.yellow,
 
                   border: `1px solid ${
                     isCurrentEventClockedIn
-                      ? "rgba(239,68,68,0.55)"
+                      ? "rgba(34,197,94,0.55)"
                       : "rgba(255,255,255,0.20)"
                   }`,
 
@@ -1194,7 +1083,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
                   letterSpacing: "0.13em",
 
-                  cursor: clockSaving || locked ? "not-allowed" : "pointer",
+                  cursor:
+                    clockSaving || locked || isCurrentEventClockedIn
+                      ? "not-allowed"
+                      : "pointer",
 
                   opacity: clockSaving ? 0.65 : locked ? 0.45 : 1,
 
@@ -1209,7 +1101,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   gap: 8,
 
                   boxShadow: isCurrentEventClockedIn
-                    ? "0 4px 14px rgba(220,38,38,0.18)"
+                    ? "0 4px 14px rgba(34,197,94,0.18)"
                     : "none",
                 }}
               >
@@ -1220,11 +1112,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     borderRadius: "50%",
 
                     background: isCurrentEventClockedIn
-                      ? "#EF4444"
+                      ? "#22C55E"
                       : COLORS.yellow,
 
                     boxShadow: isCurrentEventClockedIn
-                      ? "0 0 0 4px rgba(239,68,68,0.12)"
+                      ? "0 0 0 4px rgba(34,197,94,0.12)"
                       : "0 0 0 4px rgba(255,214,0,0.08)",
 
                     flexShrink: 0,
@@ -1234,7 +1126,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 {clockSaving
                   ? "SAVING..."
                   : isCurrentEventClockedIn
-                  ? "CLOCK OUT"
+                  ? "CLOCKED IN"
                   : "CLOCK IN"}
               </button>
 
@@ -1283,7 +1175,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     marginBottom: 4,
                   }}
                 >
-                  SESSION
+                  CLOCKED IN AT
                 </div>
 
                 <div
@@ -1305,9 +1197,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {isCurrentEventClockedIn
-                    ? formatElapsedTime(elapsedSeconds)
-                    : "00:00:00"}
+                  {isCurrentEventClockedIn && clockStartTime
+                    ? formatClockInTime(clockStartTime)
+                    : "--:--"}
                 </div>
               </div>
             </div>

@@ -167,11 +167,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // ---------------------------------------------------------
   // CACHE / LOADING
+  //
+  // Computed once (lazy useState initializer), not on every render — this
+  // was previously a plain `const` recomputed from localStorage each
+  // render. Once the first refresh populated the cache, that recomputed
+  // value flipped from false to true, which changed the initial-load
+  // effect's dependency and made it re-run a second time for no reason.
   // ---------------------------------------------------------
 
-  const hasCache =
-    readCache(CACHE.players).length > 0 ||
-    readCache(CACHE.events).length > 0;
+  const [hasCache] = useState(
+    () =>
+      readCache(CACHE.players).length > 0 ||
+      readCache(CACHE.events).length > 0
+  );
 
   const [loading, setLoading] = useState(!hasCache);
 
@@ -383,41 +391,44 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // IMPORTANT:
   // This effect is AFTER refreshAll so refreshAll already
   // exists when the effect is created.
+  //
+  // Runs once on mount and ALWAYS calls refreshAll() — even when cached
+  // data already exists. Cached data (if any) renders immediately (see the
+  // `loading` initializer above, which only blocks the UI when there is no
+  // cache), and this revalidates it in the background so screens like Home
+  // pick up changes made elsewhere without the user needing to restart the
+  // app or pull-to-refresh manually. Each refresh* function already fetches
+  // and writes its own entity independently (no wholesale clear), so this
+  // stays a targeted refresh, not a full reload.
   // ---------------------------------------------------------
 
   useEffect(() => {
 
-    if (hasCache) {
-
-      setLoading(false);
-
-      return;
-    }
-
-
     let cancelled = false;
 
 
-    const loadInitialData = async () => {
+    const loadData = async () => {
 
       try {
-
-        setLoading(true);
 
         await refreshAll();
 
       } catch (err) {
 
         console.error(
-          "[CoachPortal] Initial data load failed:",
+          "[CoachPortal] Data load failed:",
           err
         );
 
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load data."
-        );
+        if (!cancelled) {
+
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load data."
+          );
+
+        }
 
       } finally {
 
@@ -432,7 +443,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
 
-    void loadInitialData();
+    void loadData();
 
 
     return () => {
@@ -442,7 +453,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
   }, [
-    hasCache,
     refreshAll,
   ]);
 
