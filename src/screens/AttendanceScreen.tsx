@@ -34,7 +34,7 @@ import {
   AttributeSlider,
 } from "../components/ui";
 import { useData } from "../context/DataContext";
-import { lookupName } from "../utils/dataverse";
+import { lookupName, unwrap } from "../utils/dataverse";
 import { isEventActive } from "../utils/eventStatus";
 
 type AttendanceMark = "present" | "late" | "absent";
@@ -644,8 +644,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const throwIfError = (result: any, context: string) => {
     const err = result?.error ?? result?.Error ?? result?.errorCode;
 
-    if (err) {
-      throw new Error(`${context}: ${err?.message ?? err}`);
+    // IMPORTANT: the Power Apps SDK signals failure through `success: false`.
+    // `error` is optional and is NOT always populated on a failed call, so
+    // testing it alone let genuine failures continue as if they had worked —
+    // which is how a rejected Clock In ended up reported as "succeeded, but
+    // the created attendance record ID was not returned".
+    if (result?.success === false || err) {
+      const raw = err?.message ?? err;
+
+      const msg =
+        typeof raw === "string"
+          ? raw
+          : raw
+          ? JSON.stringify(raw)
+          : "the request was rejected without an error detail (most likely a Dataverse privilege issue).";
+
+      throw new Error(`${context}: ${msg}`);
     }
   };
 
@@ -746,18 +760,60 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       throwIfError(res, "Clock In");
 
+      // Logged raw so a failure that only reproduces on the mobile player
+      // can be diagnosed from the device console — the response shape is
+      // what differs between hosts, and it is otherwise invisible.
+      console.log("[Clock] Raw create response:", res);
+
       // ========================================================
       // GET CREATED RECORD ID
       // ========================================================
 
-      const createdId =
+      let createdId: string | null =
         (res as any)?.data?.axm365_eventcoachattendanceid ??
         (res as any)?.axm365_eventcoachattendanceid ??
-        (res as any)?.id;
+        (res as any)?.data?.id ??
+        (res as any)?.id ??
+        null;
+
+      // ========================================================
+      // IMPORTANT:
+      // Reaching here means Dataverse ACCEPTED the create — the attendance
+      // row exists. Whether the created record is echoed back in the
+      // response body is a host decision (it depends on the platform
+      // sending `Prefer: return=representation`), and the mobile player
+      // does not always do so. Treating a missing id as a failure was
+      // therefore wrong twice over: it reported a successful clock-in as an
+      // error, and it left `clockedIn` false, so tapping the button again
+      // wrote a SECOND row for the same coach and event.
+      //
+      // So when the id is absent, read it back instead of failing: the row
+      // is uniquely identified by coach + event.
+      // ========================================================
+
+      if (!createdId) {
+        console.warn(
+          "[Clock] Create returned no record id — reading the row back by coach + event."
+        );
+
+        const lookup = await Axm365_eventcoachattendancesService.getAll({
+          filter: `_axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+        });
+
+        throwIfError(lookup, "Clock In (confirming the saved record)");
+
+        const rows = (unwrap<any>(lookup) ?? []).slice().sort((a: any, b: any) =>
+          String(b?.createdon ?? "").localeCompare(String(a?.createdon ?? ""))
+        );
+
+        createdId = rows[0]?.axm365_eventcoachattendanceid ?? null;
+
+        console.log("[Clock] Read-back found rows:", rows.length, "id:", createdId);
+      }
 
       if (!createdId) {
         throw new Error(
-          "Clock In succeeded, but the created attendance record ID was not returned."
+          "Clock In was sent, but the saved attendance record could not be confirmed. Check the Event Coach Attendances table before clocking in again."
         );
       }
 

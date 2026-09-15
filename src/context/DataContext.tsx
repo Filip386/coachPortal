@@ -103,6 +103,19 @@ const CACHE = {
 };
 
 
+// Which Dataverse environment the cached rows above were fetched from.
+// Deliberately NOT part of CACHE — it is a marker, not cached table data,
+// and must survive the purge loop that clears the tables.
+const CACHE_ENV_KEY = "cvf_cached_org_url";
+
+
+function clearTableCaches() {
+  try {
+    Object.values(CACHE).forEach((key) => localStorage.removeItem(key));
+  } catch {}
+}
+
+
 function readCache<T>(key: string): T[] {
   try {
     const raw = localStorage.getItem(key);
@@ -261,13 +274,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshEvents = useCallback(async () => {
 
-    const res =
-      await Axm365_eventsService.getAll({
-        top: 100,
-      });
-
-    const data =
-      unwrapOrThrow<Axm365_events>(res);
+    // IMPORTANT:
+    // This used to be a bare `top: 100` with no paging and no ordering,
+    // which made it the only table here that silently truncated. Two
+    // consequences: with more than 100 events the app never saw the rest,
+    // and because Dataverse applies no guaranteed order without `orderby`,
+    // WHICH 100 came back could shift between refreshes — so the cached
+    // event list drifted out of step with the table instead of mirroring
+    // it. Paged in full (like players) so the fetched set is the whole
+    // table and a wholesale `setEvents` genuinely reflects deletions.
+    const data = await fetchAllPages<Axm365_events>((skipToken) =>
+      Axm365_eventsService.getAll({
+        ...(skipToken ? { skipToken } : {}),
+      })
+    );
 
     setEvents(data);
 
@@ -455,6 +475,96 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshGenerations,
     refreshGenerationsToCoaches,
   ]);
+
+
+  // ---------------------------------------------------------
+  // ENVIRONMENT-CHANGE CACHE PURGE
+  //
+  // IMPORTANT:
+  // The cache keys above are plain, unscoped localStorage names, and every
+  // local run of this app shares one origin (localhost:3000). Point
+  // power.config.json at a different environment — Dev2 vs Villarreal —
+  // and the previous environment's rows are still sitting under the exact
+  // same keys, so they load straight back into state on mount.
+  //
+  // That is what makes records deleted in Dataverse appear to survive: the
+  // rows on screen were never fetched from the table being edited, so no
+  // amount of refreshing that table removes them.
+  //
+  // So stamp the cache with the org URL it came from and, when that URL
+  // changes, drop the cached tables and the in-memory copies rather than
+  // showing another environment's data.
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+
+    let cancelled = false;
+
+    getContext()
+
+      .then((ctx) => {
+
+        if (cancelled) return;
+
+        const orgUrl = ctx.app.dataverseOrgUrl ?? null;
+
+        if (!orgUrl) return;
+
+        let previous: string | null = null;
+
+        try {
+          previous = localStorage.getItem(CACHE_ENV_KEY);
+        } catch {}
+
+        // An UNSTAMPED cache counts as stale too, not just a mismatched
+        // one. Caches written before this check existed carry no origin at
+        // all, so trusting them would leave exactly the stale rows this is
+        // meant to clear. On a genuine first run there is nothing cached,
+        // so this is a no-op rather than a wasted purge.
+        const hasCachedRows = Object.values(CACHE).some((key) => {
+          try {
+            return (localStorage.getItem(key)?.length ?? 0) > 2;
+          } catch {
+            return false;
+          }
+        });
+
+        if (previous !== orgUrl && hasCachedRows) {
+
+          console.warn(
+            "[CoachPortal] Cached data did not come from this environment — clearing it.",
+            { cachedFrom: previous ?? "(unstamped)", now: orgUrl }
+          );
+
+          clearTableCaches();
+
+          setPlayers([]);
+          setEvents([]);
+          setAttendances([]);
+          setInvoices([]);
+          setFacilities([]);
+          setPerformances([]);
+          setAllGenerations([]);
+          setGenerationsToCoaches([]);
+        }
+
+        try {
+          localStorage.setItem(CACHE_ENV_KEY, orgUrl);
+        } catch {}
+      })
+
+      .catch((err) => {
+        console.error(
+          "[CoachPortal] Could not determine the environment for cache validation:",
+          err
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+
+  }, []);
 
 
   // ---------------------------------------------------------
