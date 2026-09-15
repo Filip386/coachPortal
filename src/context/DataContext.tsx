@@ -283,8 +283,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     // event list drifted out of step with the table instead of mirroring
     // it. Paged in full (like players) so the fetched set is the whole
     // table and a wholesale `setEvents` genuinely reflects deletions.
+    // orderBy matters for more than presentation: paging relies on a stable
+    // sort, and without one Dataverse can return a row twice across pages or
+    // skip it entirely. Ordering by start time also means every consumer gets
+    // events chronologically by default.
     const data = await fetchAllPages<Axm365_events>((skipToken) =>
       Axm365_eventsService.getAll({
+        orderBy: ["axm365_eventdate"],
         ...(skipToken ? { skipToken } : {}),
       })
     );

@@ -1,4 +1,3 @@
-/* eslint-disable */
 import React, { useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw, Plus, ClipboardCheck, MapPin } from "lucide-react";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
@@ -40,6 +39,19 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
       if (!eventsByDay[day]) eventsByDay[day] = [];
       eventsByDay[day].push(e);
     }
+  });
+
+  // Events arrive in whatever order Dataverse returned them, which is not
+  // chronological, so a day holding 17:00 and 17:30 could list them either
+  // way round. Sort each day by start time so the list reads down the day.
+  // Every event in a bucket passed the `if (!d) return` guard above, so the
+  // date is always present here.
+  Object.values(eventsByDay).forEach((dayEvents) => {
+    dayEvents.sort(
+      (a, b) =>
+        new Date(a.axm365_eventdate!).getTime() -
+        new Date(b.axm365_eventdate!).getTime()
+    );
   });
 
   const days = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
@@ -148,13 +160,13 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
               title={selectedEvents.length === 0 ? "No Events" : `${selectedEvents.length} Event${selectedEvents.length > 1 ? "s" : ""}`}
             />
 
-            {selectedEvents.map((e, idx) => {
+            {selectedEvents.map((e) => {
               const startDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
               const eventName = e.axm365_name || "Event";
               const location = lookupName(e, "axm365_facility") || e.axm365_description || "TBD";
 
               return (
-                <div key={idx} style={{ marginTop: 14 }}>
+                <div key={e.axm365_eventid} style={{ marginTop: 14 }}>
                   <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 18, padding: 16, position: "relative", overflow: "hidden" }}>
                     <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: COLORS.yellow }} />
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
