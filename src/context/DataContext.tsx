@@ -489,6 +489,48 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   // ---------------------------------------------------------
+  // REFRESH ON APP RESUME
+  //
+  // Covers the app being backgrounded and brought back to the foreground
+  // (switching apps on mobile, switching browser tabs) without a full
+  // relaunch — the initial-load effect above only ever runs once per
+  // launch, so without this, data made stale while the app sat in the
+  // background would otherwise only refresh if the user fully signed out
+  // and back in.
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+
+    const handleVisibilityChange = () => {
+
+      if (document.visibilityState === "visible") {
+
+        refreshAll().catch(() => {});
+
+      }
+
+    };
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+
+    return () => {
+
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+      );
+
+    };
+
+  }, [
+    refreshAll,
+  ]);
+
+
+  // ---------------------------------------------------------
   // LOGGED-IN USER → CONTACT → COACH
   // ---------------------------------------------------------
 

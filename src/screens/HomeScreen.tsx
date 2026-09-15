@@ -1,5 +1,5 @@
- 
-import React from "react";
+
+import React, { useEffect } from "react";
 import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
@@ -15,6 +15,15 @@ interface HomeScreenProps {
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
   const { coachName, players, events, invoices, loading, error, refreshAll } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
+
+  // Screens unmount/remount as the bottom nav switches between them, so this
+  // fires every time the coach lands back on Home — e.g. after creating an
+  // event or another screen changes data — without needing to relaunch the
+  // app. Cached/previous data still renders immediately; this just
+  // revalidates it in the background.
+  useEffect(() => {
+    refreshAll().catch(() => {});
+  }, [refreshAll]);
 
   const todayEvent = events.find((e) => {
     const d = e.axm365_eventdate;

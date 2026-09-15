@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "appId": "e6ec3fbd-0392-4880-afa4-ac602e427c2b",
+  "appId": "ccf1272c-e2af-4abc-aabd-40a7e611bc24",
   "appDisplayName": "Coach App",
   "region": "prod",
   "appType": "CodeApp",
-  "environmentId": "3f82e4f3-c7ef-ee18-9d6e-bf3520b90558",
+  "environmentId": "5739f44a-0323-ec6a-9e6c-9795cc60af4c",
   "description": " ",
   "buildPath": "./dist",
   "buildEntryPoint": "index.html",
