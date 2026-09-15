@@ -337,6 +337,21 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   }, [selectedEventId]);
 
   // ============================================================
+  // REFRESH ATTENDANCE ON MOUNT
+  //
+  // This screen unmounts/remounts every time the bottom nav switches back
+  // to it, but it was never re-pulling attendances itself — it only relied
+  // on DataContext's own mount/visibility-change refresh. So records
+  // deleted directly in Dataverse (outside the app) kept showing here
+  // until the whole app relaunched. Mirrors the same fix already applied
+  // to HomeScreen.
+  // ============================================================
+
+  useEffect(() => {
+    refreshAttendances().catch(() => {});
+  }, [refreshAttendances]);
+
+  // ============================================================
   // LOAD ATTENDANCE MARKS
   // ============================================================
 
@@ -685,23 +700,21 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     // ==========================================================
     // IMPORTANT:
-    // Only one active clock-in session at a time. If already clocked
-    // into Event A and the user selected Event B, block a second
-    // attendance record instead of overwriting the active session.
+    // There is no clock-out action, so a stored session from Event A is
+    // never explicitly cleared before the coach clocks into Event B — it
+    // would otherwise block clocking in for every future event forever.
+    // Switching the selected event to something other than the active
+    // session's event means the coach has moved on, so just clear the old
+    // session here and fall through to clock in for the newly selected
+    // event (each event's date already comes from Dataverse, so this
+    // naturally covers both a same-day switch and a different day).
     // ==========================================================
 
     if (clockedIn && clockedInEventId && clockedInEventId !== selectedEventId) {
-      const otherEvent = events.find(
-        (e) => e.axm365_eventid === clockedInEventId
-      );
-
-      setClockError(
-        `You are already clocked in for ${
-          otherEvent?.axm365_name ?? "another event"
-        }. Only one clock-in session is allowed at a time.`
-      );
-
-      return;
+      setClockedIn(false);
+      setClockedInEventId(null);
+      setCoachAttendanceId(null);
+      localStorage.removeItem(CLOCK_STORAGE_KEY);
     }
 
     setClockSaving(true);
