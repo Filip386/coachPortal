@@ -121,6 +121,30 @@ function writeCache<T>(key: string, data: T[]) {
 }
 
 
+// Guards a Dataverse call that could otherwise hang indefinitely (seen on
+// mobile, where a stalled network/auth handshake never rejects on its own)
+// so a coach is never stuck on "loading your coach profile" forever —
+// after `ms` it rejects with a clear, diagnosable message instead.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out — check your connection and try again.`)),
+      ms
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -539,7 +563,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     setError(null);
 
 
-    getContext()
+    withTimeout(getContext(), 20000, "Loading your account")
 
       .then(async (ctx) => {
 
@@ -572,31 +596,44 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         // Security role check (Back office vs Basic coach)
         // Independent of the Contact/Coach resolution below,
         // since Back office staff may not have a Coach record.
+        //
+        // IMPORTANT: fired WITHOUT awaiting here — it goes through the
+        // generic Dataverse connector (a different, slower auth path than
+        // the typed Contact/Coach services below), and this used to be
+        // `await`-ed before the Contact → Coach lookup even started. On
+        // mobile, where that connector call can take much longer (or hang)
+        // than on browser, that blocked coachLookupLoading — and therefore
+        // Clock In — for as long as the roles fetch took, even though
+        // clocking in never needed the roles result at all.
         // -------------------------------------------------
 
         if (ctx.user.objectId) {
 
-          try {
+          fetchUserSecurityRoles(ctx.user.objectId)
 
-            const roles = await fetchUserSecurityRoles(ctx.user.objectId);
+            .then((roles) => {
 
-            console.log("[CoachPortal] Security roles:", roles);
+              console.log("[CoachPortal] Security roles:", roles);
 
-            const normalized = roles.map((r) => r.trim().toLowerCase());
+              const normalized = roles.map((r) => r.trim().toLowerCase());
 
-            setIsBackOffice(normalized.some((r) => r.includes("back office")));
+              setIsBackOffice(normalized.some((r) => r.includes("back office")));
 
-          } catch (err) {
+            })
 
-            console.error("[CoachPortal] Failed to resolve security roles:", err);
+            .catch((err) => {
 
-            setIsBackOffice(false);
+              console.error("[CoachPortal] Failed to resolve security roles:", err);
 
-          } finally {
+              setIsBackOffice(false);
 
-            setRolesLoaded(true);
+            })
 
-          }
+            .finally(() => {
+
+              setRolesLoaded(true);
+
+            });
 
         } else {
 
@@ -636,12 +673,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // -------------------------------------------------
 
           const contactRes =
-            await ContactsService.getAll({
+            await withTimeout(
+              ContactsService.getAll({
 
-              filter:
-                `emailaddress1 eq '${normalizedEmail}'`,
+                filter:
+                  `emailaddress1 eq '${normalizedEmail}'`,
 
-            });
+              }),
+              20000,
+              "Looking up your Contact record"
+            );
 
 
           const contacts =
@@ -699,11 +740,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // -------------------------------------------------
 
           const coachRes =
-            await Cr9be_coachsService.getAll({
+            await withTimeout(
+              Cr9be_coachsService.getAll({
 
-              filter: "statecode eq 0",
+                filter: "statecode eq 0",
 
-            });
+              }),
+              20000,
+              "Looking up your Coach record"
+            );
 
 
           const coaches =

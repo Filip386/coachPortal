@@ -1107,8 +1107,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               ) : (
                 <button
                   onClick={handleClockInOut}
-                  disabled={clockSaving || locked}
-                  title={locked ? LOCKED_MESSAGE : undefined}
+                  disabled={clockSaving || locked || coachLookupLoading}
+                  title={
+                    locked
+                      ? LOCKED_MESSAGE
+                      : coachLookupLoading
+                      ? "Still loading your coach profile — the button will enable automatically."
+                      : undefined
+                  }
                   style={{
                     flex: 1,
                     height: 42,
@@ -1132,9 +1138,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
                     letterSpacing: "0.13em",
 
-                    cursor: clockSaving || locked ? "not-allowed" : "pointer",
+                    cursor:
+                      clockSaving || locked || coachLookupLoading
+                        ? "not-allowed"
+                        : "pointer",
 
-                    opacity: clockSaving ? 0.65 : locked ? 0.45 : 1,
+                    opacity: clockSaving
+                      ? 0.65
+                      : locked || coachLookupLoading
+                      ? 0.45
+                      : 1,
 
                     transition: "all 0.2s ease",
 
@@ -1157,7 +1170,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                       flexShrink: 0,
                     }}
                   />
-                  {clockSaving ? "SAVING..." : "CLOCK IN"}
+                  {clockSaving
+                    ? "SAVING..."
+                    : coachLookupLoading
+                    ? "LOADING PROFILE..."
+                    : "CLOCK IN"}
                 </button>
               )}
             </div>
