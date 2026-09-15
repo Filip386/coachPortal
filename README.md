@@ -206,15 +206,9 @@ npm run lint       # ESLint (strict — no unused vars/params)
 
 ### Environment / config
 
-There is no `.env` file. The Dataverse org URL is hardcoded in `src/utils/dataverse.ts`:
+There is no `.env` file. The Dataverse org URL used by the generic connector (`ListRecordsWithOrganization`, in `src/utils/dataverse.ts`) is **not** hardcoded — it's resolved at runtime from `getContext().app.dataverseOrgUrl` (`@microsoft/power-apps/app`) and cached in memory. This means the same build works unmodified across environments (e.g. prod and Dev2); nothing in app code needs to change when the app moves.
 
-```typescript
-const ORG_URL = "https://org2560bf82.crm4.dynamics.com/";
-```
-
-Update this string if you point to a different Dataverse environment.
-
-The Power Apps app identity is defined in `power.config.json`:
+The Power Apps app identity is defined in `power.config.json`. This file is per-environment (it records which Dataverse app/environment the local `pac code push` targets), so it's expected to differ between machines/checkouts pointed at different environments — keep a copy per target environment (e.g. `power.config.prod.json`, `power.config.dev2.json`) and swap the active `power.config.json`, or pass `pac code push --environment <id>` explicitly:
 
 ```json
 {

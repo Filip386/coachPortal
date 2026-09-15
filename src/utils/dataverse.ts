@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { IOperationResult } from "@microsoft/power-apps/data";
+import { getContext } from "@microsoft/power-apps/app";
 import { EquipmentsService } from "../generated/services/EquipmentsService";
 import { MicrosoftDataverseService } from "../generated/services/MicrosoftDataverseService";
 
@@ -8,16 +9,30 @@ export interface Facility {
   name: string;
 }
 
-// Org URL of the environment (from `pac env who`); the generic Dataverse
-// connector needs it because the connection has no default organization.
-export const DATAVERSE_ORG_URL = "https://org2560bf82.crm4.dynamics.com/";
+// The generic Dataverse connector needs an explicit organization URL because
+// the connection has no default organization. Resolved from the Power Apps
+// host at runtime (instead of hardcoded) so the same build works unmodified
+// across environments (e.g. prod and Dev2).
+let cachedOrgUrl: string | null = null;
+
+async function getOrgUrl(): Promise<string> {
+  if (cachedOrgUrl) return cachedOrgUrl;
+  const ctx = await getContext();
+  if (!ctx.app.dataverseOrgUrl) {
+    throw new Error(
+      "No Dataverse organization URL available from the app context."
+    );
+  }
+  cachedOrgUrl = ctx.app.dataverseOrgUrl;
+  return cachedOrgUrl;
+}
 
 /** Security role names (e.g. "Back office") assigned to the Dataverse
  *  systemuser matching the given Azure AD object id. Uses the standard
  *  out-of-box systemuser <-> role relationship, "systemuserroles_association". */
 export async function fetchUserSecurityRoles(azureObjectId: string): Promise<string[]> {
   const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
-    DATAVERSE_ORG_URL,
+    await getOrgUrl(),
     "systemusers",
     undefined,
     undefined,
@@ -63,7 +78,7 @@ export async function fetchFacilities(): Promise<Facility[]> {
 
   // Fallback: generic Dataverse connector with explicit organization URL
   const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
-    DATAVERSE_ORG_URL,
+    await getOrgUrl(),
     "equipments",
     undefined,
     undefined,
