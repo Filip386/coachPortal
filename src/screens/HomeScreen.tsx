@@ -25,11 +25,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
     refreshAll().catch(() => {});
   }, [refreshAll]);
 
-  const todayEvent = events.find((e) => {
-    const d = e.axm365_eventdate;
-    if (!d) return false;
-    return new Date(d).toDateString() === new Date().toDateString();
-  }) ?? null;
+  const todayEvents = events
+    .filter((e) => {
+      const d = e.axm365_eventdate;
+      if (!d) return false;
+      return new Date(d).toDateString() === new Date().toDateString();
+    })
+    .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime());
 
   const squadCount = players.length;
   const overdueInvoices = invoices.filter((inv) => getInvoiceStatus(inv) === "Overdue");
@@ -101,51 +103,62 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
       {error && <ErrorBanner message={error} onRetry={refreshAll} />}
 
       {!loading && (
-        <div style={{ padding: "0 18px", marginTop: 16 }}>
-          <div
-            onClick={() => todayEvent && go("attendance")}
-            style={{ background: "#fff", borderRadius: 22, padding: 18, boxShadow: "0 14px 30px -12px rgba(11,27,61,0.22)", border: `1px solid ${COLORS.line}`, cursor: todayEvent ? "pointer" : "default" }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: todayEvent ? COLORS.yellowSoft : COLORS.line, padding: "4px 9px", borderRadius: 99, fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: COLORS.navy, textTransform: "uppercase" }}>
-                  <span style={{ width: 6, height: 6, background: todayEvent ? COLORS.navy : COLORS.mute, borderRadius: 99 }} />
-                  {todayEvent ? "Live · Today" : "No Event Today"}
-                </div>
-                <h3 style={{ margin: "10px 0 4px", fontFamily: displayStack, fontSize: 20, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>
-                  {todayEvent ? (todayEvent.axm365_name || "Event") : "No Event Scheduled"}
-                </h3>
-                {todayEvent && (
-                  <div style={{ display: "flex", gap: 12, color: COLORS.mute, fontSize: 12, marginTop: 6 }}>
-                    <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      <Clock size={12} />
-                      {todayEvent.axm365_eventdate ? new Date(todayEvent.axm365_eventdate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
-                    </span>
-                    <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      <MapPin size={12} />
-                      {todayEvent.axm365_description || "TBD"}
-                    </span>
-                  </div>
-                )}
+        <div style={{ padding: "0 18px", marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {todayEvents.length === 0 ? (
+            <div
+              style={{ background: "#fff", borderRadius: 22, padding: 18, boxShadow: "0 14px 30px -12px rgba(11,27,61,0.22)", border: `1px solid ${COLORS.line}` }}
+            >
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: COLORS.line, padding: "4px 9px", borderRadius: 99, fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: COLORS.navy, textTransform: "uppercase" }}>
+                <span style={{ width: 6, height: 6, background: COLORS.mute, borderRadius: 99 }} />
+                No Event Today
               </div>
-              {todayEvent && (
-                <div style={{ textAlign: "right", fontFamily: displayStack }}>
-                  <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{squadCount}</div>
-                  <div style={{ fontSize: 9.5, fontFamily: monoStack, letterSpacing: "0.16em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>Players</div>
-                </div>
-              )}
+              <h3 style={{ margin: "10px 0 4px", fontFamily: displayStack, fontSize: 20, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>
+                No Event Scheduled
+              </h3>
             </div>
-            {todayEvent && (
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <button onClick={(e) => { e.stopPropagation(); go("attendance"); }} style={{ flex: 1, background: COLORS.navy, color: "#fff", border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
-                  Mark Attendance
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); go("performance", undefined, todayEvent?.axm365_eventid); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
-                  Performance
-                </button>
+          ) : (
+            todayEvents.map((ev) => (
+              <div
+                key={ev.axm365_eventid}
+                onClick={() => go("attendance", undefined, ev.axm365_eventid)}
+                style={{ background: "#fff", borderRadius: 22, padding: 18, boxShadow: "0 14px 30px -12px rgba(11,27,61,0.22)", border: `1px solid ${COLORS.line}`, cursor: "pointer" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: COLORS.yellowSoft, padding: "4px 9px", borderRadius: 99, fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: COLORS.navy, textTransform: "uppercase" }}>
+                      <span style={{ width: 6, height: 6, background: COLORS.navy, borderRadius: 99 }} />
+                      Live · Today
+                    </div>
+                    <h3 style={{ margin: "10px 0 4px", fontFamily: displayStack, fontSize: 20, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>
+                      {ev.axm365_name || "Event"}
+                    </h3>
+                    <div style={{ display: "flex", gap: 12, color: COLORS.mute, fontSize: 12, marginTop: 6 }}>
+                      <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <Clock size={12} />
+                        {ev.axm365_eventdate ? new Date(ev.axm365_eventdate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
+                      </span>
+                      <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <MapPin size={12} />
+                        {ev.axm365_description || "TBD"}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", fontFamily: displayStack }}>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{squadCount}</div>
+                    <div style={{ fontSize: 9.5, fontFamily: monoStack, letterSpacing: "0.16em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>Players</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                  <button onClick={(e) => { e.stopPropagation(); go("attendance", undefined, ev.axm365_eventid); }} style={{ flex: 1, background: COLORS.navy, color: "#fff", border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
+                    Mark Attendance
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); go("performance", undefined, ev.axm365_eventid); }} style={{ flex: 1, background: COLORS.yellow, color: COLORS.navy, border: 0, padding: "11px 0", borderRadius: 12, fontSize: 12.5, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em" }}>
+                    Performance
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+            ))
+          )}
         </div>
       )}
 
