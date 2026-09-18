@@ -3,11 +3,29 @@ import type { IOperationResult } from "@microsoft/power-apps/data";
 import { getContext } from "@microsoft/power-apps/app";
 import { EquipmentsService } from "../generated/services/EquipmentsService";
 import { MicrosoftDataverseService } from "../generated/services/MicrosoftDataverseService";
+import { ContactsService } from "../generated/services/ContactsService";
 
 export interface Facility {
   id: string;
   name: string;
 }
+
+/** An open Task activity from a Coach record's Dataverse timeline
+ *  (regardingobjectid = the coach). Surfaced in-app as a notification. */
+export interface CoachTask {
+  id: string;
+  subject: string;
+  description: string | null;
+  dueDate: string | null;
+  priority: "Low" | "Normal" | "High";
+  createdOn: string | null;
+}
+
+const TASK_PRIORITY: Record<number, CoachTask["priority"]> = {
+  0: "Low",
+  1: "Normal",
+  2: "High",
+};
 
 // The generic Dataverse connector needs an explicit organization URL because
 // the connection has no default organization. Resolved from the Power Apps
@@ -93,6 +111,94 @@ export async function fetchFacilities(): Promise<Facility[]> {
   const data = res.data as Record<string, unknown> | undefined;
   const items = (data?.value ?? (data as any)?.items ?? []) as any[];
   return toFacilities(items);
+}
+
+/** Open (statecode = 0) Task activities regarding the given Coach record —
+ *  i.e. what shows up in that Coach's Dataverse timeline as an active task.
+ *  Uses the generic Dataverse connector since "task" has no generated
+ *  service/model (it's a standard activity table, not an app-specific one). */
+export async function fetchOpenCoachTasks(coachId: string): Promise<CoachTask[]> {
+  const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
+    await getOrgUrl(),
+    "tasks",
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "activityid,subject,description,scheduledend,prioritycode,createdon",
+    `_regardingobjectid_value eq ${coachId} and statecode eq 0`,
+    // Newest first — matches the default sort of the Coach record's
+    // Dataverse timeline control. createdon is used (not scheduledend)
+    // because it's always populated, whereas a task's due date is optional.
+    "createdon desc"
+  );
+  if (!res.success) {
+    const msg = (res.error as any)?.message ?? "Failed to load notifications";
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  const data = res.data as Record<string, unknown> | undefined;
+  const items = (data?.value ?? []) as any[];
+  return items
+    .map((t) => {
+      const id = t?.activityid as string | undefined;
+      if (!id) return null;
+      return {
+        id,
+        subject: (t?.subject as string) || "Untitled task",
+        description: (t?.description as string) ?? null,
+        dueDate: (t?.scheduledend as string) ?? null,
+        priority: TASK_PRIORITY[t?.prioritycode as number] ?? "Normal",
+        createdOn: (t?.createdon as string) ?? null,
+      } as CoachTask;
+    })
+    .filter((t): t is CoachTask => t !== null);
+}
+
+/** Marks a Task as Completed (statecode 1 / statuscode 5 — the standard
+ *  Dataverse "Completed" combination for the activity table). */
+export async function completeCoachTask(taskId: string): Promise<void> {
+  const res = await MicrosoftDataverseService.UpdateRecordWithOrganization(
+    "return=representation",
+    "application/json",
+    await getOrgUrl(),
+    "tasks",
+    taskId,
+    { statecode: 1, statuscode: 5 }
+  );
+  if (!res.success) {
+    const msg = (res.error as any)?.message ?? "Failed to update the task";
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+}
+
+/** Name + phone for the given Guardian Contact ids — the "Guardian" lookup
+ *  on Player (cr9be_member) points at a Contact record, and both fields are
+ *  read straight from there (not from the player's own cr9be_membername)
+ *  so the name always matches the Contact record exactly. Keyed by
+ *  contactid; mobilephone wins over telephone1 when a contact has both. */
+export interface GuardianContact {
+  name: string | null;
+  phone: string | null;
+}
+
+export async function fetchGuardianContacts(memberIds: (string | undefined)[]): Promise<Record<string, GuardianContact>> {
+  const uniqueIds = Array.from(new Set(memberIds.filter((id): id is string => !!id)));
+  if (uniqueIds.length === 0) return {};
+
+  const res = await ContactsService.getAll({
+    filter: uniqueIds.map((id) => `contactid eq ${id}`).join(" or "),
+    select: ["contactid", "fullname", "telephone1", "mobilephone"],
+  });
+  if (!res.success) return {};
+
+  const map: Record<string, GuardianContact> = {};
+  unwrap<{ contactid: string; fullname?: string; telephone1?: string; mobilephone?: string }>(res).forEach((c) => {
+    map[c.contactid] = {
+      name: c.fullname || null,
+      phone: c.mobilephone || c.telephone1 || null,
+    };
+  });
+  return map;
 }
 
 export function unwrap<T>(result: unknown): T[] {

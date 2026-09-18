@@ -34,9 +34,12 @@ import {
   fetchAllPages,
   fetchFacilities,
   fetchUserSecurityRoles,
+  fetchOpenCoachTasks,
+  completeCoachTask,
+  fetchGuardianContacts,
 } from "../utils/dataverse";
 
-import type { Facility } from "../utils/dataverse";
+import type { Facility, CoachTask, GuardianContact } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
 import type { Contacts } from "../generated/models/ContactsModel";
@@ -72,6 +75,16 @@ interface DataContextValue {
   allGenerations: Axm365_generations[];
   generationsToCoaches: Axm365_generationstocoacheses[];
 
+  /** Open Task activities from the signed-in coach's Dataverse timeline
+   *  (regarding their Coach record) — surfaced as in-app notifications. */
+  tasks: CoachTask[];
+  tasksLoading: boolean;
+
+  /** Guardian (cr9be_member lookup) name + phone, keyed by that Contact's
+   *  id — read straight from the Contact record rather than the player's
+   *  own cr9be_membername field. */
+  guardianContacts: Record<string, GuardianContact>;
+
   loading: boolean;
   loggedInCoachId: string | null;
   error: string | null;
@@ -84,6 +97,10 @@ interface DataContextValue {
   refreshPerformances: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
   refreshGenerationsToCoaches: () => Promise<void>;
+  refreshTasks: () => Promise<void>;
+  /** Marks the task Completed in Dataverse and drops it from the list.
+   *  Throws (leaving the task in the list) if the update fails. */
+  completeTask: (taskId: string) => Promise<void>;
   refreshAll: () => Promise<void>;
 }
 
@@ -100,6 +117,7 @@ const CACHE = {
   performances: "cvf_performances",
   generations: "cvf_generations",
   generationsToCoaches: "cvf_generations_to_coaches",
+  tasks: "cvf_tasks",
 };
 
 
@@ -214,6 +232,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<Axm365_generationstocoacheses[]>(() =>
       readCache(CACHE.generationsToCoaches)
     );
+
+  const [tasks, setTasks] = useState<CoachTask[]>(() =>
+    readCache(CACHE.tasks)
+  );
+
+  const [tasksLoading, setTasksLoading] = useState(false);
+
+  const [guardianContacts, setGuardianContacts] = useState<Record<string, GuardianContact>>({});
 
 
   // ---------------------------------------------------------
@@ -420,6 +446,65 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   // ---------------------------------------------------------
+  // REFRESH TASKS (coach timeline notifications)
+  //
+  // Depends on coachId, which resolves asynchronously (see the Contact →
+  // Coach lookup effect below) — unlike the other refresh* functions this
+  // is NOT part of refreshAll/the initial-load effect, since coachId is
+  // usually still null at that point. It's instead triggered by its own
+  // effect once coachId becomes available.
+  // ---------------------------------------------------------
+
+  const refreshTasks = useCallback(async () => {
+
+    if (!coachId) return;
+
+    setTasksLoading(true);
+
+    try {
+
+      const data = await fetchOpenCoachTasks(coachId);
+
+      setTasks(data);
+
+      writeCache(CACHE.tasks, data);
+
+    } finally {
+
+      setTasksLoading(false);
+
+    }
+
+  }, [coachId]);
+
+
+  const completeTask = useCallback(async (taskId: string) => {
+
+    // Optimistic: the coach expects the task to disappear the moment they
+    // tap "Mark done", not after a round trip. Re-fetching on failure would
+    // just restore it if the update didn't actually go through.
+    const previous = tasks;
+
+    setTasks((cur) => cur.filter((t) => t.id !== taskId));
+
+    try {
+
+      await completeCoachTask(taskId);
+
+      writeCache(CACHE.tasks, previous.filter((t) => t.id !== taskId));
+
+    } catch (err) {
+
+      setTasks(previous);
+
+      throw err;
+
+    }
+
+  }, [tasks]);
+
+
+  // ---------------------------------------------------------
   // REFRESH EVERYTHING
   //
   // Uses allSettled instead of all: a security role that simply isn't
@@ -551,6 +636,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setPerformances([]);
           setAllGenerations([]);
           setGenerationsToCoaches([]);
+          setTasks([]);
         }
 
         try {
@@ -628,6 +714,48 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   // ---------------------------------------------------------
+  // GUARDIAN CONTACTS (name + phone)
+  //
+  // Derived from whichever players are currently loaded rather than its own
+  // refresh* function — there's no separate "refresh guardians" action a
+  // screen would ever trigger; it just needs to stay in sync with players.
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+
+    const memberIds = players.map((p) => p._cr9be_member_value);
+
+    if (memberIds.filter(Boolean).length === 0) {
+      setGuardianContacts({});
+      return;
+    }
+
+    fetchGuardianContacts(memberIds)
+      .then(setGuardianContacts)
+      .catch(() => {});
+
+  }, [players]);
+
+
+  // ---------------------------------------------------------
+  // REFRESH TASKS ONCE THE COACH IS KNOWN
+  //
+  // Fires as soon as coachId resolves (right after the Contact → Coach
+  // lookup below succeeds) rather than waiting on a manual screen visit,
+  // so the notification bell's badge is already correct the first time a
+  // coach lands on Home.
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+
+    if (!coachId) return;
+
+    refreshTasks().catch(() => {});
+
+  }, [coachId, refreshTasks]);
+
+
+  // ---------------------------------------------------------
   // REFRESH ON APP RESUME
   //
   // Covers the app being backgrounded and brought back to the foreground
@@ -645,6 +773,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       if (document.visibilityState === "visible") {
 
         refreshAll().catch(() => {});
+
+        refreshTasks().catch(() => {});
 
       }
 
@@ -666,6 +796,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   }, [
     refreshAll,
+    refreshTasks,
   ]);
 
 
@@ -1007,6 +1138,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         generationsToCoaches,
 
+        tasks,
+
+        tasksLoading,
+
+        guardianContacts,
+
         loading,
 
         error,
@@ -1026,6 +1163,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshGenerations,
 
         refreshGenerationsToCoaches,
+
+        refreshTasks,
+
+        completeTask,
 
         refreshAll,
 

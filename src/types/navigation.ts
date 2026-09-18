@@ -5,4 +5,5 @@ export type ScreenId =
   | "players"
   | "invoices"
   | "performance"
-  | "create";
+  | "create"
+  | "notifications";
