@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown } from "lucide-react";
+import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown, User, Phone } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
@@ -31,7 +31,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches } = useData();
+  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, guardianContacts } = useData();
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
@@ -138,6 +138,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const playerPos = lookupName(player, "cr9be_position");
   const playerNum = player ? (player.cr9be_number ?? "?") : "?";
   const initials = playerName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
+  const guardianContact = player?._cr9be_member_value ? guardianContacts[player._cr9be_member_value] : undefined;
+  const guardianName = guardianContact?.name ?? null;
+  const guardianPhone = guardianContact?.phone ?? null;
 
   // Memoized on [performances, selectedId] so the array reference is stable across
   // re-renders — otherwise the Edit Mode prefill effect below (which depends on
@@ -462,6 +465,31 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     )}
                   </div>
                 </div>
+
+                {(guardianName || guardianPhone) && (
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${COLORS.line}`, position: "relative" }}>
+                    <div style={{ fontFamily: monoStack, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600, marginBottom: 8 }}>
+                      Guardian
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <User size={13} color={COLORS.mute} strokeWidth={2} />
+                        <span style={{ fontFamily: fontStack, fontSize: 13, fontWeight: 700, color: COLORS.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {guardianName || "Not on file"}
+                        </span>
+                      </div>
+                      {guardianPhone && (
+                        <a
+                          href={`tel:${guardianPhone}`}
+                          style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: monoStack, fontSize: 12, fontWeight: 700, color: COLORS.navy, textDecoration: "none", flexShrink: 0 }}
+                        >
+                          <Phone size={12} strokeWidth={2} />
+                          {guardianPhone}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div style={{ marginTop: 14, position: "relative" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
