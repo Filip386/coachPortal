@@ -270,11 +270,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshPlayers = useCallback(async () => {
 
-    const data = await fetchAllPages<Cr9be_players>((skipToken) =>
+    const fetched = await fetchAllPages<Cr9be_players>((skipToken) =>
       Cr9be_playersService.getAll({
         filter: "statecode eq 0",
         ...(skipToken ? { skipToken } : {}),
       })
+    );
+
+    // Name A→Z for every screen that lists players (Attendance, My Players,
+    // Performance). Done client-side with localeCompare so Cyrillic and
+    // accented names sort correctly, and ties fall back to surname.
+    const data = [...fetched].sort(
+      (a, b) =>
+        (a.cr9be_name ?? "").localeCompare(b.cr9be_name ?? "", undefined, { sensitivity: "base" }) ||
+        (a.cr9be_surname ?? "").localeCompare(b.cr9be_surname ?? "", undefined, { sensitivity: "base" })
     );
 
     setPlayers(data);
