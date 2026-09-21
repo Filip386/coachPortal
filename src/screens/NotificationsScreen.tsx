@@ -17,7 +17,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 };
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, goBack }) => {
-  const { tasks, tasksLoading, refreshTasks, completeTask } = useData();
+  const { tasks, tasksLoading, tasksError, refreshTasks, completeTask } = useData();
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +59,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, go
       />
 
       {error && <ErrorBanner message={error} onRetry={() => setError(null)} />}
+      {tasksError && !error && <ErrorBanner message={`Couldn't load notifications: ${tasksError}`} onRetry={refreshData} />}
 
       {tasksLoading && tasks.length === 0 && <LoadingSpinner label="Loading notifications…" />}
 

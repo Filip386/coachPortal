@@ -6,6 +6,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 
 import { getContext } from "@microsoft/power-apps/app";
@@ -81,6 +82,8 @@ interface DataContextValue {
    *  (regarding their Coach record) — surfaced as in-app notifications. */
   tasks: CoachTask[];
   tasksLoading: boolean;
+  /** Why the last notifications fetch failed (null when it succeeded). */
+  tasksError: string | null;
 
   /** The signed-in coach's own clock-in records (Event Coach Attendances). */
   coachAttendances: Axm365_eventcoachattendances[];
@@ -248,12 +251,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [tasksLoading, setTasksLoading] = useState(false);
 
+  const [tasksError, setTasksError] = useState<string | null>(null);
+
   const [coachAttendances, setCoachAttendances] =
     useState<Axm365_eventcoachattendances[]>([]);
 
   const [coachAttendancesLoaded, setCoachAttendancesLoaded] = useState(false);
 
   const [guardianContacts, setGuardianContacts] = useState<Record<string, GuardianContact>>({});
+
+  const guardianContactsRef = useRef<Record<string, GuardianContact>>({});
 
 
   // ---------------------------------------------------------
@@ -514,7 +521,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       setTasks(data);
 
+      setTasksError(null);
+
       writeCache(CACHE.tasks, data);
+
+    } catch (err) {
+
+      setTasksError(err instanceof Error ? err.message : "Failed to load notifications.");
+
+      throw err;
 
     } finally {
 
@@ -770,16 +785,33 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
 
-    const memberIds = players.map((p) => p._cr9be_member_value);
+    // `players` gets a new array on every refresh (app open, resume, each
+    // return to Home). Replacing the map each time meant a single failed or
+    // partial lookup wiped guardian details that had already loaded — they
+    // showed up, then vanished mid-session. So results are MERGED into what
+    // is already known, and only guardians not yet loaded are requested.
+    let cancelled = false;
 
-    if (memberIds.filter(Boolean).length === 0) {
-      setGuardianContacts({});
-      return;
-    }
+    const missing = players
+      .map((p) => p._cr9be_member_value)
+      .filter((id): id is string => !!id && !guardianContactsRef.current[id]);
 
-    fetchGuardianContacts(memberIds)
-      .then(setGuardianContacts)
+    if (missing.length === 0) return;
+
+    fetchGuardianContacts(missing)
+      .then((found) => {
+        if (cancelled || Object.keys(found).length === 0) return;
+        setGuardianContacts((prev) => {
+          const next = { ...prev, ...found };
+          guardianContactsRef.current = next;
+          return next;
+        });
+      })
       .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
 
   }, [players]);
 
@@ -1193,6 +1225,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         tasks,
 
         tasksLoading,
+
+        tasksError,
 
         coachAttendances,
 

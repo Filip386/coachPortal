@@ -113,30 +113,69 @@ export async function fetchFacilities(): Promise<Facility[]> {
   return toFacilities(items);
 }
 
+const TASK_SELECT = "activityid,subject,description,scheduledend,prioritycode,createdon";
+
+function failMessage(res: { error?: unknown }, fallback: string): string {
+  const msg = (res.error as any)?.message ?? fallback;
+  return typeof msg === "string" ? msg : JSON.stringify(msg);
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 /** Open (statecode = 0) Task activities regarding the given Coach record —
  *  i.e. what shows up in that Coach's Dataverse timeline as an active task.
- *  Uses the generic Dataverse connector since "task" has no generated
- *  service/model (it's a standard activity table, not an app-specific one). */
+ *  "task" has no generated service/model, so this goes through the generic
+ *  Dataverse connector. It tries the current-environment operation first —
+ *  it needs no organization URL, which the Power Apps mobile player does not
+ *  reliably provide — then falls back to the org-URL operation. Each attempt
+ *  is time-boxed so a stalled mobile handshake can't hang forever. */
 export async function fetchOpenCoachTasks(coachId: string): Promise<CoachTask[]> {
-  const res = await MicrosoftDataverseService.ListRecordsWithOrganization(
-    await getOrgUrl(),
-    "tasks",
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    "activityid,subject,description,scheduledend,prioritycode,createdon",
-    `_regardingobjectid_value eq ${coachId} and statecode eq 0`,
-    // Newest first — matches the default sort of the Coach record's
-    // Dataverse timeline control. createdon is used (not scheduledend)
-    // because it's always populated, whereas a task's due date is optional.
-    "createdon desc"
-  );
-  if (!res.success) {
-    const msg = (res.error as any)?.message ?? "Failed to load notifications";
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  const filter = `_regardingobjectid_value eq ${coachId} and statecode eq 0`;
+  // Newest first — matches the default sort of the Coach record's Dataverse
+  // timeline. createdon (not scheduledend) because it is always populated.
+  const orderBy = "createdon desc";
+
+  const attempts: Array<() => Promise<IOperationResult<Record<string, unknown>>>> = [
+    () =>
+      MicrosoftDataverseService.ListRecords(
+        "tasks", undefined, undefined, undefined, TASK_SELECT, filter, orderBy
+      ) as Promise<IOperationResult<Record<string, unknown>>>,
+    async () =>
+      MicrosoftDataverseService.ListRecordsWithOrganization(
+        await getOrgUrl(), "tasks", undefined, undefined, undefined, undefined, TASK_SELECT, filter, orderBy
+      ),
+  ];
+
+  const errors: string[] = [];
+  let data: Record<string, unknown> | undefined;
+
+  for (const attempt of attempts) {
+    try {
+      const res = await withTimeout(attempt(), 20000, "Loading notifications");
+      if (res.success) {
+        data = res.data as Record<string, unknown> | undefined;
+        errors.length = 0;
+        break;
+      }
+      errors.push(failMessage(res, "Failed to load notifications"));
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
   }
-  const data = res.data as Record<string, unknown> | undefined;
+
+  if (errors.length > 0) {
+    console.error("[CoachPortal] Loading notifications failed:", errors);
+    throw new Error(errors.join(" | "));
+  }
+
   const items = (data?.value ?? []) as any[];
   return items
     .map((t) => {
@@ -155,49 +194,83 @@ export async function fetchOpenCoachTasks(coachId: string): Promise<CoachTask[]>
 }
 
 /** Marks a Task as Completed (statecode 1 / statuscode 5 — the standard
- *  Dataverse "Completed" combination for the activity table). */
+ *  Dataverse "Completed" combination for the activity table). Same
+ *  current-environment-first strategy as the read above. */
 export async function completeCoachTask(taskId: string): Promise<void> {
-  const res = await MicrosoftDataverseService.UpdateRecordWithOrganization(
-    "return=representation",
-    "application/json",
-    await getOrgUrl(),
-    "tasks",
-    taskId,
-    { statecode: 1, statuscode: 5 }
-  );
-  if (!res.success) {
-    const msg = (res.error as any)?.message ?? "Failed to update the task";
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  const body = { statecode: 1, statuscode: 5 };
+  const errors: string[] = [];
+
+  const attempts: Array<() => Promise<IOperationResult<Record<string, unknown>>>> = [
+    () =>
+      MicrosoftDataverseService.UpdateRecord(
+        "return=representation", "application/json", "tasks", taskId, body
+      ),
+    async () =>
+      MicrosoftDataverseService.UpdateRecordWithOrganization(
+        "return=representation", "application/json", await getOrgUrl(), "tasks", taskId, body
+      ),
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await withTimeout(attempt(), 20000, "Updating the task");
+      if (res.success) return;
+      errors.push(failMessage(res, "Failed to update the task"));
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
   }
+
+  console.error("[CoachPortal] Completing task failed:", errors);
+  throw new Error(errors.join(" | "));
 }
 
 /** Name + phone for the given Guardian Contact ids — the "Guardian" lookup
  *  on Player (cr9be_member) points at a Contact record, and both fields are
- *  read straight from there (not from the player's own cr9be_membername)
- *  so the name always matches the Contact record exactly. Keyed by
- *  contactid; mobilephone wins over telephone1 when a contact has both. */
+ *  read straight from there. mobilephone wins over telephone1 when a contact
+ *  has both.
+ *
+ *  Ids are requested in small chunks: one OR-filter over the whole squad
+ *  (100+ GUIDs) makes a request URL long enough for the mobile host to
+ *  reject it. A chunk that fails is skipped rather than failing the batch,
+ *  and the caller merges the result into what it already has. */
 export interface GuardianContact {
   name: string | null;
   phone: string | null;
 }
 
+const GUARDIAN_CHUNK = 15;
+
 export async function fetchGuardianContacts(memberIds: (string | undefined)[]): Promise<Record<string, GuardianContact>> {
   const uniqueIds = Array.from(new Set(memberIds.filter((id): id is string => !!id)));
-  if (uniqueIds.length === 0) return {};
-
-  const res = await ContactsService.getAll({
-    filter: uniqueIds.map((id) => `contactid eq ${id}`).join(" or "),
-    select: ["contactid", "fullname", "telephone1", "mobilephone"],
-  });
-  if (!res.success) return {};
-
   const map: Record<string, GuardianContact> = {};
-  unwrap<{ contactid: string; fullname?: string; telephone1?: string; mobilephone?: string }>(res).forEach((c) => {
-    map[c.contactid] = {
-      name: c.fullname || null,
-      phone: c.mobilephone || c.telephone1 || null,
-    };
-  });
+
+  for (let i = 0; i < uniqueIds.length; i += GUARDIAN_CHUNK) {
+    const chunk = uniqueIds.slice(i, i + GUARDIAN_CHUNK);
+    try {
+      const res = await withTimeout(
+        ContactsService.getAll({
+          filter: chunk.map((id) => `contactid eq ${id}`).join(" or "),
+          select: ["contactid", "fullname", "telephone1", "mobilephone"],
+        }),
+        20000,
+        "Loading guardians"
+      );
+      if (!res.success) {
+        console.error("[CoachPortal] Guardian lookup failed:", res.error);
+        continue;
+      }
+      unwrap<{ contactid: string; fullname?: string; telephone1?: string; mobilephone?: string }>(res).forEach((c) => {
+        map[c.contactid] = {
+          name: c.fullname || null,
+          phone: c.mobilephone || c.telephone1 || null,
+        };
+      });
+    } catch (err) {
+      console.error("[CoachPortal] Guardian lookup failed:", err);
+    }
+  }
+
   return map;
 }
 
