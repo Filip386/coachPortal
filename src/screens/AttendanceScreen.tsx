@@ -145,8 +145,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const locked = !!selectedEvent && !isBackOffice && !isEventActive(selectedEvent);
 
-  const LOCKED_MESSAGE =
-    "Past sessions are locked. Only Back office can mark attendance or clock in for a past event.";
+  // "Locked" means "not today's event" — so it covers future events as well
+  // as past ones, and the wording has to match which one it is.
+  const isFutureEvent =
+    !!selectedEvent?.axm365_eventdate &&
+    new Date(selectedEvent.axm365_eventdate).getTime() > Date.now() &&
+    !isEventActive(selectedEvent);
+
+  const LOCKED_MESSAGE = isFutureEvent
+    ? "This session hasn't happened yet. Attendance, clock in and performance can only be recorded on the day of the event. Only Back office can do it earlier."
+    : "Past sessions are locked. Only Back office can mark attendance or clock in for a past event.";
 
   // ============================================================
   // PERFORMANCE EDIT MODAL STATE
