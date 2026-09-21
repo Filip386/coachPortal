@@ -628,12 +628,29 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       [id]: v,
     }));
 
+  // Present/Absent tallies count only attendance that has actually been
+  // SAVED for this event. The rows default to "Present" in the UI, but that
+  // default isn't a record — counting it made an untouched event read as
+  // fully present. Unsaved players contribute to neither count until Save.
+  const savedAttendedByPlayer = new Map<string, boolean>();
+
+  if (selectedEventId) {
+    for (const a of attendances) {
+      if ((a as any)._axm365_event_value === selectedEventId) {
+        savedAttendedByPlayer.set(
+          (a as any)._axm365_player_value,
+          !!a.axm365_attended
+        );
+      }
+    }
+  }
+
   const presentCount = shownPlayers.filter(
-    (p) => (marks[p.cr9be_playerid] ?? "present") !== "absent"
+    (p) => savedAttendedByPlayer.get(p.cr9be_playerid) === true
   ).length;
 
   const absentCount = shownPlayers.filter(
-    (p) => marks[p.cr9be_playerid] === "absent"
+    (p) => savedAttendedByPlayer.get(p.cr9be_playerid) === false
   ).length;
 
   const attendancePct =
@@ -1293,6 +1310,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   gap: 8,
                 }}
               >
+                <Tally
+                  label="Players"
+                  count={shownPlayers.length}
+                  color={COLORS.yellow}
+                />
+
                 <Tally
                   label="Present"
                   count={presentCount}
