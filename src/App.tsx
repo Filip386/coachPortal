@@ -12,6 +12,7 @@ import {
   PlayersScreen,
   CreateEventScreen,
   NotificationsScreen,
+  CoachAttendanceScreen,
 } from "./screens";
 import type { ScreenId } from "./types/navigation";
 import { COLORS, fontStack, displayStack, monoStack } from "./constants/design";
@@ -102,6 +103,7 @@ const App: React.FC = () => {
       case "players":     return <PlayersScreen go={go} goBack={goBack} />;
       case "create":      return <CreateEventScreen go={go} goBack={goBack} />;
       case "notifications": return <NotificationsScreen go={go} goBack={goBack} />;
+      case "coachAttendance": return <CoachAttendanceScreen go={go} goBack={goBack} />;
       default:            return <HomeScreen go={go} />;
     }
   };

@@ -1,19 +1,20 @@
 
 import React, { useEffect } from "react";
-import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Bell } from "lucide-react";
+import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Bell, Check, X } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, SectionTitle, ActionTile, ErrorBanner } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
+import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, loading, error, refreshAll } = useData();
+  const { coachName, coachId, players, events, invoices, tasks, coachAttendances, coachAttendancesLoaded, loading, error, refreshAll, refreshCoachAttendances } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
 
   // Screens unmount/remount as the bottom nav switches between them, so this
@@ -23,7 +24,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
   // revalidates it in the background.
   useEffect(() => {
     refreshAll().catch(() => {});
-  }, [refreshAll]);
+    refreshCoachAttendances().catch(() => {});
+  }, [refreshAll, refreshCoachAttendances]);
+
+  const attendanceHistory = buildCoachAttendanceHistory(events, coachAttendances, coachId, 15).reverse();
 
   const todayEvents = events
     .filter((e) => {
@@ -114,6 +118,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
               <Stat label="Events" value={String(events.length)} />
               <Divider />
               <Stat label="Overdue" value={String(overdueInvoices.length)} warn={overdueInvoices.length > 0} />
+            </div>
+          )}
+
+          {coachId && (
+            <div onClick={() => go("coachAttendance")} style={{ marginTop: 20, cursor: "pointer" }}>
+              <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.2em", opacity: 0.7, fontWeight: 600, marginBottom: 10 }}>
+                MY ATTENDANCE · LAST 15
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 26 }}>
+                {!coachAttendancesLoaded && (
+                  <span style={{ opacity: 0.5, fontFamily: monoStack, fontSize: 11 }}>Loading…</span>
+                )}
+                {coachAttendancesLoaded && attendanceHistory.length === 0 && (
+                  <span style={{ opacity: 0.5, fontFamily: monoStack, fontSize: 11 }}>No past events yet</span>
+                )}
+                {coachAttendancesLoaded && attendanceHistory.map(({ event, status }) => {
+                  const present = status === "present";
+                  return (
+                    <span
+                      key={event.axm365_eventid}
+                      title={`${event.axm365_name} · ${present ? "Present" : "Absent"}`}
+                      style={{ width: 26, height: 26, borderRadius: 99, background: present ? "#2ECC71" : "#E5484D", display: "flex", alignItems: "center", justifyContent: "center" }}
+                    >
+                      {present ? <Check size={14} color="#fff" strokeWidth={3} /> : <X size={14} color="#fff" strokeWidth={3} />}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

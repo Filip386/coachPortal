@@ -23,6 +23,8 @@ import { ContactsService } from "../generated/services/ContactsService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
+import type { Axm365_eventcoachattendances } from "../generated/models/Axm365_eventcoachattendancesModel";
+import { Axm365_eventcoachattendancesService } from "../generated/services/Axm365_eventcoachattendancesService";
 import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
@@ -80,6 +82,12 @@ interface DataContextValue {
   tasks: CoachTask[];
   tasksLoading: boolean;
 
+  /** The signed-in coach's own clock-in records (Event Coach Attendances). */
+  coachAttendances: Axm365_eventcoachattendances[];
+  /** False until the first fetch has settled, so screens don't paint every
+   *  event as "no clock-in" while the records are still loading. */
+  coachAttendancesLoaded: boolean;
+
   /** Guardian (cr9be_member lookup) name + phone, keyed by that Contact's
    *  id — read straight from the Contact record rather than the player's
    *  own cr9be_membername field. */
@@ -98,6 +106,7 @@ interface DataContextValue {
   refreshGenerations: () => Promise<void>;
   refreshGenerationsToCoaches: () => Promise<void>;
   refreshTasks: () => Promise<void>;
+  refreshCoachAttendances: () => Promise<void>;
   /** Marks the task Completed in Dataverse and drops it from the list.
    *  Throws (leaving the task in the list) if the update fails. */
   completeTask: (taskId: string) => Promise<void>;
@@ -238,6 +247,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
   const [tasksLoading, setTasksLoading] = useState(false);
+
+  const [coachAttendances, setCoachAttendances] =
+    useState<Axm365_eventcoachattendances[]>([]);
+
+  const [coachAttendancesLoaded, setCoachAttendancesLoaded] = useState(false);
 
   const [guardianContacts, setGuardianContacts] = useState<Record<string, GuardianContact>>({});
 
@@ -463,6 +477,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // usually still null at that point. It's instead triggered by its own
   // effect once coachId becomes available.
   // ---------------------------------------------------------
+
+  const refreshCoachAttendances = useCallback(async () => {
+
+    if (!coachId) return;
+
+    try {
+
+      const data = await fetchAllPages<Axm365_eventcoachattendances>((skipToken) =>
+        Axm365_eventcoachattendancesService.getAll({
+          filter: `_axm365_coach_value eq ${coachId} and statecode eq 0`,
+          ...(skipToken ? { skipToken } : {}),
+        })
+      );
+
+      setCoachAttendances(data);
+
+    } finally {
+
+      setCoachAttendancesLoaded(true);
+
+    }
+
+  }, [coachId]);
+
 
   const refreshTasks = useCallback(async () => {
 
@@ -761,7 +799,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     refreshTasks().catch(() => {});
 
-  }, [coachId, refreshTasks]);
+    refreshCoachAttendances().catch(() => {});
+
+  }, [coachId, refreshTasks, refreshCoachAttendances]);
 
 
   // ---------------------------------------------------------
@@ -785,6 +825,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         refreshTasks().catch(() => {});
 
+        refreshCoachAttendances().catch(() => {});
+
       }
 
     };
@@ -806,6 +848,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [
     refreshAll,
     refreshTasks,
+    refreshCoachAttendances,
   ]);
 
 
@@ -1151,6 +1194,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         tasksLoading,
 
+        coachAttendances,
+
+        coachAttendancesLoaded,
+
         guardianContacts,
 
         loading,
@@ -1174,6 +1221,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshGenerationsToCoaches,
 
         refreshTasks,
+
+        refreshCoachAttendances,
 
         completeTask,
 
