@@ -19,6 +19,7 @@ import { Axm365_generationsService } from "../generated/services/Axm365_generati
 import { Axm365_generationstocoachesesService } from "../generated/services/Axm365_generationstocoachesesService";
 import { Cr9be_coachsService } from "../generated/services/Cr9be_coachsService";
 import { ContactsService } from "../generated/services/ContactsService";
+import { TasksService } from "../generated/services/TasksService";
 
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
@@ -27,6 +28,7 @@ import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
 import type { Axm365_generationstocoacheses } from "../generated/models/Axm365_generationstocoachesesModel";
+import type { Tasks } from "../generated/models/TasksModel";
 
 import {
   unwrapOrThrow,
@@ -72,6 +74,13 @@ interface DataContextValue {
   allGenerations: Axm365_generations[];
   generationsToCoaches: Axm365_generationstocoacheses[];
 
+  /** Open (statecode = Open) Task activities regarding the signed-in coach's
+   *  own Coach record, newest first — mirrors the model-driven Timeline's
+   *  sort order. Empty until coachId resolves. */
+  tasks: Tasks[];
+  tasksLoading: boolean;
+  tasksError: string | null;
+
   loading: boolean;
   loggedInCoachId: string | null;
   error: string | null;
@@ -84,6 +93,10 @@ interface DataContextValue {
   refreshPerformances: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
   refreshGenerationsToCoaches: () => Promise<void>;
+  refreshTasks: () => Promise<void>;
+  /** Marks a task Completed in Dataverse and drops it from `tasks` — active
+   *  tasks only are ever shown, so a completed one simply disappears. */
+  completeTask: (taskId: string) => Promise<void>;
   refreshAll: () => Promise<void>;
 }
 
@@ -100,6 +113,7 @@ const CACHE = {
   performances: "cvf_performances",
   generations: "cvf_generations",
   generationsToCoaches: "cvf_generations_to_coaches",
+  tasks: "cvf_tasks",
 };
 
 
@@ -214,6 +228,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<Axm365_generationstocoacheses[]>(() =>
       readCache(CACHE.generationsToCoaches)
     );
+
+  const [tasks, setTasks] = useState<Tasks[]>(() => readCache(CACHE.tasks));
+
+  const [tasksLoading, setTasksLoading] = useState(true);
+
+  const [tasksError, setTasksError] = useState<string | null>(null);
 
 
   // ---------------------------------------------------------
@@ -415,6 +435,104 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       CACHE.generationsToCoaches,
       data
     );
+
+  }, []);
+
+
+  // ---------------------------------------------------------
+  // REFRESH TASKS
+  //
+  // Coach-scoped (unlike the tables above), so this can't join refreshAll —
+  // it has nothing to fetch until coachId resolves from the Contact → Coach
+  // lookup further down. Ordered by createdon (always populated, unlike
+  // sortdate which is only set once a task has a scheduled date) so the
+  // most recently created task is always the one at the top.
+  // ---------------------------------------------------------
+
+  const refreshTasks = useCallback(async () => {
+
+    if (!coachId) return;
+
+    setTasksLoading(true);
+
+    try {
+
+      const res =
+        await TasksService.getAll({
+          filter: `statecode eq 0 and _regardingobjectid_value eq ${coachId}`,
+          orderBy: ["createdon desc"],
+        });
+
+      const data =
+        unwrapOrThrow<Tasks>(res);
+
+      setTasks(data);
+
+      writeCache(CACHE.tasks, data);
+
+      setTasksError(null);
+
+    } catch (err) {
+
+      console.error("[CoachPortal] Failed to load tasks:", err);
+
+      setTasksError(
+        err instanceof Error ? err.message : "Failed to load tasks."
+      );
+
+    } finally {
+
+      setTasksLoading(false);
+
+    }
+
+  }, [coachId]);
+
+
+  useEffect(() => {
+
+    if (coachId) {
+
+      void refreshTasks();
+
+    } else if (!coachLookupLoading) {
+
+      // Coach lookup finished without a coachId (e.g. no linked Coach
+      // record) — nothing to fetch, so stop showing a loading state.
+      setTasksLoading(false);
+
+    }
+
+  }, [coachId, coachLookupLoading, refreshTasks]);
+
+
+  // Marks Completed in Dataverse, then drops it locally — the list only
+  // ever shows active tasks, so there is nothing to reconcile afterward.
+  const completeTask = useCallback(async (taskId: string) => {
+
+    const res =
+      await TasksService.update(taskId, {
+        statecode: 1,
+        statuscode: 5,
+      } as any);
+
+    if (!res.success) {
+
+      const msg = (res.error as any)?.message ?? "Failed to complete task";
+
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+
+    }
+
+    setTasks((prev) => {
+
+      const next = prev.filter((t) => t.activityid !== taskId);
+
+      writeCache(CACHE.tasks, next);
+
+      return next;
+
+    });
 
   }, []);
 
@@ -1007,6 +1125,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         generationsToCoaches,
 
+        tasks,
+
+        tasksLoading,
+
+        tasksError,
+
         loading,
 
         error,
@@ -1026,6 +1150,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshGenerations,
 
         refreshGenerationsToCoaches,
+
+        refreshTasks,
+
+        completeTask,
 
         refreshAll,
 

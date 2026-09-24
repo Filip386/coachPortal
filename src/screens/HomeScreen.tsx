@@ -13,7 +13,7 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, loading, error, refreshAll } = useData();
+  const { coachName, players, events, invoices, tasks, loading, error, refreshAll } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
 
   // Screens unmount/remount as the bottom nav switches between them, so this
@@ -65,15 +65,37 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             </div>
           </div>
           <button
-            onClick={() => go("invoices")}
+            onClick={() => go("notifications")}
             style={{ position: "relative", width: 38, height: 38, borderRadius: 12, background: "rgba(255,255,255,0.08)", border: `1px solid rgba(255,255,255,0.12)`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
               <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
             </svg>
-            {overdueInvoices.length > 0 && (
-              <span style={{ position: "absolute", top: 7, right: 7, width: 8, height: 8, background: COLORS.yellow, borderRadius: 99, border: `2px solid ${COLORS.navy}` }} />
+            {tasks.length > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: -4,
+                  right: -4,
+                  minWidth: 16,
+                  height: 16,
+                  padding: "0 4px",
+                  background: COLORS.yellow,
+                  color: COLORS.navy,
+                  borderRadius: 99,
+                  border: `2px solid ${COLORS.navy}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: monoStack,
+                  fontSize: 9,
+                  fontWeight: 800,
+                  lineHeight: 1,
+                }}
+              >
+                {tasks.length > 9 ? "9+" : tasks.length}
+              </span>
             )}
           </button>
         </div>
