@@ -6,6 +6,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 
 import { getContext } from "@microsoft/power-apps/app";
@@ -32,7 +33,6 @@ import type { Tasks } from "../generated/models/TasksModel";
 
 import {
   unwrapOrThrow,
-  unwrap,
   fetchAllPages,
   fetchFacilities,
   fetchUserSecurityRoles,
@@ -42,6 +42,24 @@ import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
 import type { Contacts } from "../generated/models/ContactsModel";
+
+
+export type DataResource =
+  | "players"
+  | "events"
+  | "attendances"
+  | "invoices"
+  | "facilities"
+  | "performances"
+  | "generations"
+  | "generationsToCoaches"
+  | "tasks";
+
+
+interface EnsureFreshOptions {
+  force?: boolean;
+  maxAgeMs?: number;
+}
 
 
 interface DataContextValue {
@@ -93,7 +111,12 @@ interface DataContextValue {
   refreshPerformances: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
   refreshGenerationsToCoaches: () => Promise<void>;
+  refreshCoach: () => Promise<void>;
   refreshTasks: () => Promise<void>;
+  ensureFresh: (
+    resources: DataResource[],
+    options?: EnsureFreshOptions
+  ) => Promise<void>;
   /** Marks a task Completed in Dataverse and drops it from `tasks` — active
    *  tasks only are ever shown, so a completed one simply disappears. */
   completeTask: (taskId: string) => Promise<void>;
@@ -123,6 +146,19 @@ const CACHE = {
 const CACHE_ENV_KEY = "cvf_cached_org_url";
 
 
+const RESOURCE_MAX_AGE_MS: Record<DataResource, number> = {
+  players: 5 * 60_000,
+  events: 60_000,
+  attendances: 30_000,
+  invoices: 2 * 60_000,
+  facilities: 5 * 60_000,
+  performances: 60_000,
+  generations: 5 * 60_000,
+  generationsToCoaches: 5 * 60_000,
+  tasks: 30_000,
+};
+
+
 function clearTableCaches() {
   try {
     Object.values(CACHE).forEach((key) => localStorage.removeItem(key));
@@ -145,6 +181,39 @@ function writeCache<T>(key: string, data: T[]) {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {}
+}
+
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error;
+
+  const candidate = error as any;
+  const message =
+    candidate?.message ??
+    candidate?.error?.message ??
+    candidate?.details?.message ??
+    candidate?.response?.data?.error?.message;
+
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
+
+
+function normalizeGuid(value: string | null | undefined): string {
+  return (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+}
+
+
+async function retryReadOnce<T>(
+  label: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (firstError) {
+    console.warn(`[CoachPortal] ${label} failed; retrying once.`, firstError);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return operation();
+  }
 }
 
 
@@ -229,7 +298,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       readCache(CACHE.generationsToCoaches)
     );
 
-  const [tasks, setTasks] = useState<Tasks[]>(() => readCache(CACHE.tasks));
+  // Tasks are actionable and coach-specific, so never restore them from a
+  // previous mobile/browser session. They are fetched after coach resolution.
+  const [tasks, setTasks] = useState<Tasks[]>([]);
 
   const [tasksLoading, setTasksLoading] = useState(true);
 
@@ -258,41 +329,94 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     useState<string | null>(null);
 
 
+  // Android Power Apps can hang when generated Dataverse reads overlap.
+  // Every Context-owned Dataverse operation therefore passes through one
+  // queue. Resource-level in-flight tracking also prevents duplicate tab
+  // effects from placing the same read in the queue more than once.
+  const dataverseQueueTailRef = useRef<Promise<void>>(Promise.resolve());
+  const resourceInFlightRef = useRef<
+    Partial<Record<DataResource, Promise<void>>>
+  >({});
+  const lastFetchedRef = useRef<Partial<Record<DataResource, number>>>({});
+  const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
+  const rolesInFlightRef = useRef<Promise<void> | null>(null);
+
+
+  const enqueueDataverse = useCallback(
+    <T,>(label: string, operation: () => Promise<T>): Promise<T> => {
+      const run = dataverseQueueTailRef.current
+        .catch(() => undefined)
+        .then(() => withTimeout(operation(), 20000, label));
+
+      dataverseQueueTailRef.current = run.then(
+        () => undefined,
+        () => undefined
+      );
+
+      return run;
+    },
+    []
+  );
+
+
+  const runResourceRefresh = useCallback(
+    (
+      resource: DataResource,
+      label: string,
+      operation: () => Promise<void>
+    ): Promise<void> => {
+      const existing = resourceInFlightRef.current[resource];
+      if (existing) return existing;
+
+      const request = enqueueDataverse(label, operation)
+        .then(() => {
+          lastFetchedRef.current[resource] = Date.now();
+        })
+        .finally(() => {
+          delete resourceInFlightRef.current[resource];
+        });
+
+      resourceInFlightRef.current[resource] = request;
+      return request;
+    },
+    [enqueueDataverse]
+  );
+
+
   // ---------------------------------------------------------
   // REFRESH PLAYERS
   // ---------------------------------------------------------
 
-  const refreshPlayers = useCallback(async () => {
+  const refreshPlayers = useCallback(() =>
+    runResourceRefresh("players", "Loading players", async () => {
+      const data = await fetchAllPages<Cr9be_players>((skipToken) =>
+        Cr9be_playersService.getAll({
+          filter: "statecode eq 0",
+          ...(skipToken ? { skipToken } : {}),
+        })
+      );
 
-    const data = await fetchAllPages<Cr9be_players>((skipToken) =>
-      Cr9be_playersService.getAll({
-        filter: "statecode eq 0",
-        ...(skipToken ? { skipToken } : {}),
-      })
-    );
+      setPlayers(data);
+      writeCache(CACHE.players, data);
 
-    setPlayers(data);
-
-    writeCache(CACHE.players, data);
-
-
-    // Warm player photo cache in background
-    prefetchPlayerPhotos(
-      data.map((p) => ({
-        playerId: p.cr9be_playerid,
-        pictureId: p.cr9be_pictureid,
-        pictureVersion: p.cr9be_picture_timestamp,
-      }))
-    ).catch(() => {});
-
-  }, []);
+      // Warm player photo cache in background.
+      prefetchPlayerPhotos(
+        data.map((p) => ({
+          playerId: p.cr9be_playerid,
+          pictureId: p.cr9be_pictureid,
+          pictureVersion: p.cr9be_picture_timestamp,
+        }))
+      ).catch(() => {});
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH EVENTS
   // ---------------------------------------------------------
 
-  const refreshEvents = useCallback(async () => {
+  const refreshEvents = useCallback(() =>
+    runResourceRefresh("events", "Loading events", async () => {
 
     // IMPORTANT:
     // This used to be a bare `top: 100` with no paging and no ordering,
@@ -307,136 +431,114 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     // sort, and without one Dataverse can return a row twice across pages or
     // skip it entirely. Ordering by start time also means every consumer gets
     // events chronologically by default.
-    const data = await fetchAllPages<Axm365_events>((skipToken) =>
-      Axm365_eventsService.getAll({
-        orderBy: ["axm365_eventdate"],
-        ...(skipToken ? { skipToken } : {}),
-      })
-    );
+      const data = await fetchAllPages<Axm365_events>((skipToken) =>
+        Axm365_eventsService.getAll({
+          orderBy: ["axm365_eventdate"],
+          ...(skipToken ? { skipToken } : {}),
+        })
+      );
 
-    setEvents(data);
-
-    writeCache(CACHE.events, data);
-
-  }, []);
+      setEvents(data);
+      writeCache(CACHE.events, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH ATTENDANCES
   // ---------------------------------------------------------
 
-  const refreshAttendances = useCallback(async () => {
+  const refreshAttendances = useCallback(() =>
+    runResourceRefresh("attendances", "Loading attendances", async () => {
+      const res = await Axm365_eventattendancesService.getAll({});
+      const data = unwrapOrThrow<Axm365_eventattendances>(res);
 
-    const res =
-      await Axm365_eventattendancesService.getAll({});
-
-    const data =
-      unwrapOrThrow<Axm365_eventattendances>(res);
-
-    setAttendances(data);
-
-    writeCache(CACHE.attendances, data);
-
-  }, []);
+      setAttendances(data);
+      writeCache(CACHE.attendances, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH INVOICES
   // ---------------------------------------------------------
 
-  const refreshInvoices = useCallback(async () => {
+  const refreshInvoices = useCallback(() =>
+    runResourceRefresh("invoices", "Loading invoices", async () => {
+      const res = await InvoicesService.getAll({});
+      const data = unwrapOrThrow<Invoices>(res);
 
-    const res =
-      await InvoicesService.getAll({});
-
-    const data =
-      unwrapOrThrow<Invoices>(res);
-
-    setInvoices(data);
-
-    writeCache(CACHE.invoices, data);
-
-  }, []);
+      setInvoices(data);
+      writeCache(CACHE.invoices, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH FACILITIES
   // ---------------------------------------------------------
 
-  const refreshFacilities = useCallback(async () => {
+  const refreshFacilities = useCallback(() =>
+    runResourceRefresh("facilities", "Loading facilities", async () => {
+      const data = await fetchFacilities();
 
-    const data =
-      await fetchFacilities();
-
-    setFacilities(data);
-
-    writeCache(CACHE.facilities, data);
-
-  }, []);
+      setFacilities(data);
+      writeCache(CACHE.facilities, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH PERFORMANCES
   // ---------------------------------------------------------
 
-  const refreshPerformances = useCallback(async () => {
+  const refreshPerformances = useCallback(() =>
+    runResourceRefresh("performances", "Loading performances", async () => {
+      const res = await Axm365_playereventperformancesService.getAll({});
+      const data = unwrapOrThrow<Axm365_playereventperformances>(res);
 
-    const res =
-      await Axm365_playereventperformancesService.getAll({});
-
-    const data =
-      unwrapOrThrow<Axm365_playereventperformances>(res);
-
-    setPerformances(data);
-
-    writeCache(CACHE.performances, data);
-
-  }, []);
+      setPerformances(data);
+      writeCache(CACHE.performances, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH GENERATIONS
   // ---------------------------------------------------------
 
-  const refreshGenerations = useCallback(async () => {
-
-    const res =
-      await Axm365_generationsService.getAll({
+  const refreshGenerations = useCallback(() =>
+    runResourceRefresh("generations", "Loading generations", async () => {
+      const res = await Axm365_generationsService.getAll({
         filter: "statecode eq 0",
       });
+      const data = unwrapOrThrow<Axm365_generations>(res);
 
-    const data =
-      unwrapOrThrow<Axm365_generations>(res);
-
-    setAllGenerations(data);
-
-    writeCache(CACHE.generations, data);
-
-  }, []);
+      setAllGenerations(data);
+      writeCache(CACHE.generations, data);
+    }),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
   // REFRESH GENERATIONS TO COACHES
   // ---------------------------------------------------------
 
-  const refreshGenerationsToCoaches = useCallback(async () => {
-
-    const res =
-      await Axm365_generationstocoachesesService.getAll({
+  const refreshGenerationsToCoaches = useCallback(() =>
+    runResourceRefresh(
+      "generationsToCoaches",
+      "Loading coach generations",
+      async () => {
+        const res = await Axm365_generationstocoachesesService.getAll({
         filter: "statecode eq 0",
       });
+        const data = unwrapOrThrow<Axm365_generationstocoacheses>(res);
 
-    const data =
-      unwrapOrThrow<Axm365_generationstocoacheses>(res);
-
-    setGenerationsToCoaches(data);
-
-    writeCache(
-      CACHE.generationsToCoaches,
-      data
-    );
-
-  }, []);
+        setGenerationsToCoaches(data);
+        writeCache(CACHE.generationsToCoaches, data);
+      }
+    ),
+  [runResourceRefresh]);
 
 
   // ---------------------------------------------------------
@@ -450,55 +552,47 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // ---------------------------------------------------------
 
   const refreshTasks = useCallback(async () => {
-
-    if (!coachId) return;
+    if (!coachId) {
+      setTasks([]);
+      setTasksLoading(false);
+      return;
+    }
 
     setTasksLoading(true);
 
     try {
-
-      const res =
-        await TasksService.getAll({
-          filter: `statecode eq 0 and _regardingobjectid_value eq ${coachId}`,
+      await runResourceRefresh("tasks", "Loading tasks", async () => {
+        const res = await TasksService.getAll({
+          filter: `statecode eq 0 and _regardingobjectid_value eq ${normalizeGuid(coachId)}`,
           orderBy: ["createdon desc"],
         });
+        const data = unwrapOrThrow<Tasks>(res);
 
-      const data =
-        unwrapOrThrow<Tasks>(res);
-
-      setTasks(data);
-
-      writeCache(CACHE.tasks, data);
-
-      setTasksError(null);
-
+        setTasks(data);
+        setTasksError(null);
+      });
     } catch (err) {
-
       console.error("[CoachPortal] Failed to load tasks:", err);
-
-      setTasksError(
-        err instanceof Error ? err.message : "Failed to load tasks."
-      );
-
+      setTasksError(getErrorMessage(err, "Failed to load tasks."));
+      throw err;
     } finally {
-
       setTasksLoading(false);
-
     }
-
-  }, [coachId]);
+  }, [coachId, runResourceRefresh]);
 
 
   useEffect(() => {
 
     if (coachId) {
 
-      void refreshTasks();
+      void refreshTasks().catch(() => {});
 
     } else if (!coachLookupLoading) {
 
-      // Coach lookup finished without a coachId (e.g. no linked Coach
-      // record) — nothing to fetch, so stop showing a loading state.
+      // Coach lookup finished without a coachId. Never leave tasks from an
+      // earlier session or coach visible.
+      setTasks([]);
+      setTasksError(null);
       setTasksLoading(false);
 
     }
@@ -509,85 +603,89 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // Marks Completed in Dataverse, then drops it locally — the list only
   // ever shows active tasks, so there is nothing to reconcile afterward.
   const completeTask = useCallback(async (taskId: string) => {
-
-    const res =
-      await TasksService.update(taskId, {
+    const res = await enqueueDataverse("Completing task", () =>
+      TasksService.update(taskId, {
         statecode: 1,
         statuscode: 5,
-      } as any);
+      })
+    ).catch((requestError) => {
+      console.error("[CoachPortal] Complete Task request rejected:", {
+        taskId,
+        error: requestError,
+      });
+      throw new Error(
+        getErrorMessage(requestError, "Dataverse could not complete the task.")
+      );
+    });
 
     if (!res.success) {
-
-      const msg = (res.error as any)?.message ?? "Failed to complete task";
-
-      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-
+      console.error("[CoachPortal] Complete Task failed:", {
+        taskId,
+        result: res,
+        error: res.error,
+      });
+      throw new Error(
+        getErrorMessage(res.error, "Dataverse could not complete the task.")
+      );
     }
 
     setTasks((prev) => {
-
-      const next = prev.filter((t) => t.activityid !== taskId);
-
-      writeCache(CACHE.tasks, next);
-
-      return next;
-
+      return prev.filter((t) => t.activityid !== taskId);
     });
-
-  }, []);
+    lastFetchedRef.current.tasks = Date.now();
+  }, [enqueueDataverse]);
 
 
   // ---------------------------------------------------------
   // REFRESH EVERYTHING
   //
-  // Uses allSettled instead of all: a security role that simply isn't
-  // granted read access to one table (e.g. a Basic coach without Invoices
-  // access) must not break Home/Calendar/Attendance/Squad for that user —
-  // Promise.all would reject the whole batch on that single failure and
-  // surface a blocking "An unknown error occurred" banner even though the
-  // other seven fetches succeeded fine. Only treat it as a real, app-wide
-  // failure (and surface the error banner) when every single fetch failed,
-  // which points to something fundamental (network/auth) rather than a
-  // per-table permission gap.
+  // Deliberately sequential. The Android Power Apps host can hang when
+  // generated Dataverse getAll calls overlap. A lock also makes repeated
+  // Home mounts, visibility events, and manual refreshes share one run.
   // ---------------------------------------------------------
 
-  const refreshAll = useCallback(async () => {
-
-    const results = await Promise.allSettled([
-      refreshPlayers(),
-      refreshEvents(),
-      refreshAttendances(),
-      refreshInvoices(),
-      refreshFacilities(),
-      refreshPerformances(),
-      refreshGenerations(),
-      refreshGenerationsToCoaches(),
-    ]);
-
-    const failures = results.filter(
-      (r): r is PromiseRejectedResult => r.status === "rejected"
-    );
-
-    failures.forEach((f) =>
-      console.error(
-        "[CoachPortal] A background data refresh failed:",
-        f.reason
-      )
-    );
-
-    if (failures.length > 0 && failures.length === results.length) {
-
-      const reason = failures[0].reason;
-
-      setError(
-        reason instanceof Error ? reason.message : "Failed to load data."
-      );
-
-      return;
+  const refreshAll = useCallback((): Promise<void> => {
+    if (refreshAllInFlightRef.current) {
+      return refreshAllInFlightRef.current;
     }
 
-    setError(null);
+    const refreshers: Array<[DataResource, () => Promise<void>]> = [
+      ["players", refreshPlayers],
+      ["events", refreshEvents],
+      ["attendances", refreshAttendances],
+      ["invoices", refreshInvoices],
+      ["facilities", refreshFacilities],
+      ["performances", refreshPerformances],
+      ["generations", refreshGenerations],
+      ["generationsToCoaches", refreshGenerationsToCoaches],
+    ];
 
+    const run = (async () => {
+      const failures: unknown[] = [];
+
+      for (const [resource, refresh] of refreshers) {
+        try {
+          await refresh();
+        } catch (refreshError) {
+          failures.push(refreshError);
+          console.error(
+            `[CoachPortal] Background refresh failed for ${resource}:`,
+            refreshError
+          );
+        }
+      }
+
+      if (failures.length === refreshers.length) {
+        setError(getErrorMessage(failures[0], "Failed to load data."));
+      } else {
+        setError(null);
+      }
+    })().finally(() => {
+      refreshAllInFlightRef.current = null;
+    });
+
+    refreshAllInFlightRef.current = run;
+    return run;
   }, [
     refreshPlayers,
     refreshEvents,
@@ -597,6 +695,63 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshPerformances,
     refreshGenerations,
     refreshGenerationsToCoaches,
+  ]);
+
+
+  const ensureFresh = useCallback(async (
+    resources: DataResource[],
+    options: EnsureFreshOptions = {}
+  ): Promise<void> => {
+    const refreshers: Record<DataResource, () => Promise<void>> = {
+      players: refreshPlayers,
+      events: refreshEvents,
+      attendances: refreshAttendances,
+      invoices: refreshInvoices,
+      facilities: refreshFacilities,
+      performances: refreshPerformances,
+      generations: refreshGenerations,
+      generationsToCoaches: refreshGenerationsToCoaches,
+      tasks: refreshTasks,
+    };
+
+    const uniqueResources = Array.from(new Set(resources));
+    const failures: unknown[] = [];
+    let successfulRefreshes = 0;
+
+    for (const resource of uniqueResources) {
+      const maxAgeMs = options.maxAgeMs ?? RESOURCE_MAX_AGE_MS[resource];
+      const lastFetched = lastFetchedRef.current[resource] ?? 0;
+      const isFresh = Date.now() - lastFetched < maxAgeMs;
+
+      if (!options.force && isFresh) continue;
+
+      try {
+        await refreshers[resource]();
+        successfulRefreshes += 1;
+      } catch (refreshError) {
+        failures.push(refreshError);
+        console.error(
+          `[CoachPortal] Targeted refresh failed for ${resource}:`,
+          refreshError
+        );
+      }
+    }
+
+    if (failures.length > 0 && successfulRefreshes === 0) {
+      setError(getErrorMessage(failures[0], "Failed to refresh data."));
+    } else if (successfulRefreshes > 0) {
+      setError(null);
+    }
+  }, [
+    refreshPlayers,
+    refreshEvents,
+    refreshAttendances,
+    refreshInvoices,
+    refreshFacilities,
+    refreshPerformances,
+    refreshGenerations,
+    refreshGenerationsToCoaches,
+    refreshTasks,
   ]);
 
 
@@ -669,10 +824,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setPerformances([]);
           setAllGenerations([]);
           setGenerationsToCoaches([]);
+          setTasks([]);
+          lastFetchedRef.current = {};
         }
 
         try {
           localStorage.setItem(CACHE_ENV_KEY, orgUrl);
+          // Remove Task rows written by older versions of the app. Tasks are
+          // no longer trusted across sessions.
+          localStorage.removeItem(CACHE.tasks);
         } catch {}
       })
 
@@ -762,7 +922,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (document.visibilityState === "visible") {
 
-        refreshAll().catch(() => {});
+        void ensureFresh([
+          "players",
+          "events",
+          "attendances",
+          "invoices",
+          "facilities",
+          "performances",
+          "generations",
+          "generationsToCoaches",
+          "tasks",
+        ]);
 
       }
 
@@ -783,7 +953,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
   }, [
-    refreshAll,
+    ensureFresh,
   ]);
 
 
@@ -791,12 +961,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // LOGGED-IN USER → CONTACT → COACH
   // ---------------------------------------------------------
 
-  useEffect(() => {
+  const refreshCoach = useCallback(async () => {
 
     setError(null);
+    setCoachLookupLoading(true);
+    setCoachLookupError(null);
+    setCoachId(null);
+    setLoggedInCoachId(null);
 
 
-    withTimeout(getContext(), 20000, "Loading your account")
+    await withTimeout(getContext(), 20000, "Loading your account")
 
       .then(async (ctx) => {
 
@@ -821,56 +995,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         if (fullName) {
 
           setCoachName(fullName);
-
-        }
-
-
-        // -------------------------------------------------
-        // Security role check (Back office vs Basic coach)
-        // Independent of the Contact/Coach resolution below,
-        // since Back office staff may not have a Coach record.
-        //
-        // IMPORTANT: fired WITHOUT awaiting here — it goes through the
-        // generic Dataverse connector (a different, slower auth path than
-        // the typed Contact/Coach services below), and this used to be
-        // `await`-ed before the Contact → Coach lookup even started. On
-        // mobile, where that connector call can take much longer (or hang)
-        // than on browser, that blocked coachLookupLoading — and therefore
-        // Clock In — for as long as the roles fetch took, even though
-        // clocking in never needed the roles result at all.
-        // -------------------------------------------------
-
-        if (ctx.user.objectId) {
-
-          fetchUserSecurityRoles(ctx.user.objectId)
-
-            .then((roles) => {
-
-              console.log("[CoachPortal] Security roles:", roles);
-
-              const normalized = roles.map((r) => r.trim().toLowerCase());
-
-              setIsBackOffice(normalized.some((r) => r.includes("back office")));
-
-            })
-
-            .catch((err) => {
-
-              console.error("[CoachPortal] Failed to resolve security roles:", err);
-
-              setIsBackOffice(false);
-
-            })
-
-            .finally(() => {
-
-              setRolesLoaded(true);
-
-            });
-
-        } else {
-
-          setRolesLoaded(true);
 
         }
 
@@ -905,21 +1029,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // Logged-in user email → Contact
           // -------------------------------------------------
 
-          const contactRes =
-            await withTimeout(
-              ContactsService.getAll({
+          const contacts = await retryReadOnce(
+            "Contact lookup",
+            async () => {
+              const contactRes = await enqueueDataverse(
+                "Looking up your Contact record",
+                () => ContactsService.getAll({
+                  filter: `emailaddress1 eq '${normalizedEmail}'`,
+                })
+              );
 
-                filter:
-                  `emailaddress1 eq '${normalizedEmail}'`,
-
-              }),
-              20000,
-              "Looking up your Contact record"
-            );
-
-
-          const contacts =
-            unwrap<Contacts>(contactRes);
+              return unwrapOrThrow<Contacts>(contactRes);
+            }
+          );
 
 
           console.log(
@@ -956,8 +1078,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
 
-          const contactId =
-            contact.contactid;
+          const contactId = normalizeGuid(contact.contactid);
 
 
           console.log(
@@ -972,28 +1093,27 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // Contact → Coach
           // -------------------------------------------------
 
-          const coachRes =
-            await withTimeout(
-              Cr9be_coachsService.getAll({
+          const coaches = await retryReadOnce(
+            "Coach lookup",
+            async () => {
+              const coachRes = await enqueueDataverse(
+                "Looking up your Coach record",
+                () => Cr9be_coachsService.getAll({
+                  filter:
+                    `statecode eq 0 and _cr9be_contact_value eq ${contactId}`,
+                  top: 2,
+                })
+              );
 
-                filter: "statecode eq 0",
-
-              }),
-              20000,
-              "Looking up your Coach record"
-            );
-
-
-          const coaches =
-            unwrap<Cr9be_coachs>(coachRes);
+              return unwrapOrThrow<Cr9be_coachs>(coachRes);
+            }
+          );
 
 
           const coach =
             coaches.find(
               (c) =>
-                (c as any)._cr9be_contact_value
-                  ?.toLowerCase() ===
-                contactId?.toLowerCase()
+                normalizeGuid(c._cr9be_contact_value) === contactId
             );
 
 
@@ -1083,7 +1203,53 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       });
 
-  }, []);
+  }, [enqueueDataverse]);
+
+
+  useEffect(() => {
+    void refreshCoach();
+  }, [refreshCoach]);
+
+
+  // Roles are lower priority than the user/Coach and screen data. Start this
+  // only after the initial read sequence has settled, and use the same queue.
+  useEffect(() => {
+    if (coachLookupLoading || loading || rolesLoaded || rolesInFlightRef.current) {
+      return;
+    }
+
+    const run = (async () => {
+      try {
+        const ctx = await withTimeout(getContext(), 20000, "Loading your account");
+
+        if (!ctx.user.objectId) {
+          setIsBackOffice(false);
+          return;
+        }
+
+        const roles = await enqueueDataverse(
+          "Loading security roles",
+          () => fetchUserSecurityRoles(ctx.user.objectId!)
+        );
+        const normalized = roles.map((role) => role.trim().toLowerCase());
+        setIsBackOffice(normalized.some((role) => role.includes("back office")));
+      } catch (roleError) {
+        console.error("[CoachPortal] Failed to resolve security roles:", roleError);
+        setIsBackOffice(false);
+      } finally {
+        setRolesLoaded(true);
+      }
+    })().finally(() => {
+      rolesInFlightRef.current = null;
+    });
+
+    rolesInFlightRef.current = run;
+  }, [
+    coachLookupLoading,
+    loading,
+    rolesLoaded,
+    enqueueDataverse,
+  ]);
 
 
   // ---------------------------------------------------------
@@ -1151,7 +1317,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         refreshGenerationsToCoaches,
 
+        refreshCoach,
+
         refreshTasks,
+
+        ensureFresh,
 
         completeTask,
 

@@ -87,6 +87,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     refreshPerformances,
     allGenerations,
     generationsToCoaches,
+    ensureFresh,
   } = useData();
 
   const [saving, setSaving] = useState(false);
@@ -337,19 +338,19 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   }, [selectedEventId]);
 
   // ============================================================
-  // REFRESH ATTENDANCE ON MOUNT
-  //
-  // This screen unmounts/remounts every time the bottom nav switches back
-  // to it, but it was never re-pulling attendances itself — it only relied
-  // on DataContext's own mount/visibility-change refresh. So records
-  // deleted directly in Dataverse (outside the app) kept showing here
-  // until the whole app relaunched. Mirrors the same fix already applied
-  // to HomeScreen.
+  // TARGETED REVALIDATION ON TAB ENTRY
   // ============================================================
 
   useEffect(() => {
-    refreshAttendances().catch(() => {});
-  }, [refreshAttendances]);
+    void ensureFresh([
+      "players",
+      "events",
+      "attendances",
+      "performances",
+      "generations",
+      "generationsToCoaches",
+    ]);
+  }, [ensureFresh]);
 
   // ============================================================
   // LOAD ATTENDANCE MARKS

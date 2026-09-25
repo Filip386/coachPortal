@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw, Plus, ClipboardCheck, MapPin } from "lucide-react";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import { COLORS, displayStack, monoStack } from "../constants/design";
@@ -13,11 +13,15 @@ interface CalendarScreenProps {
 }
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) => {
-  const { events, loading, error, refreshEvents } = useData();
+  const { events, loading, error, refreshEvents, ensureFresh } = useData();
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void ensureFresh(["events"]);
+  }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);

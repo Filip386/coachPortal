@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { RefreshCw, Check, Clock, BellOff } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
@@ -23,23 +23,48 @@ const PRIORITY_COLOR: Record<number, string> = {
 };
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, goBack }) => {
-  const { tasks, tasksLoading, tasksError, coachLookupLoading, coachLookupError, refreshTasks, completeTask } = useData();
+  const {
+    tasks,
+    tasksLoading,
+    tasksError,
+    coachLookupLoading,
+    coachLookupError,
+    refreshCoach,
+    ensureFresh,
+    completeTask,
+  } = useData();
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [failedTaskId, setFailedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!coachLookupLoading && !coachLookupError) {
+      void ensureFresh(["tasks"]);
+    }
+  }, [coachLookupLoading, coachLookupError, ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);
-    await refreshTasks().catch(() => {});
-    setRefreshing(false);
+    try {
+      if (coachLookupError) {
+        await refreshCoach();
+      } else {
+        await ensureFresh(["tasks"], { force: true });
+      }
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleComplete = async (taskId: string) => {
     setCompleteError(null);
+    setFailedTaskId(null);
     setCompletingId(taskId);
     try {
       await completeTask(taskId);
     } catch (err) {
+      setFailedTaskId(taskId);
       setCompleteError(err instanceof Error ? err.message : "Failed to mark the task as done.");
     } finally {
       setCompletingId(null);
@@ -67,8 +92,18 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, go
       />
 
       {!coachLookupError && loading && <LoadingSpinner label="Loading notifications…" />}
-      {coachLookupError && <ErrorBanner message={coachLookupError} />}
-      {completeError && <ErrorBanner message={completeError} onRetry={() => setCompleteError(null)} />}
+      {coachLookupError && (
+        <ErrorBanner
+          message={coachLookupError}
+          onRetry={() => void refreshCoach()}
+        />
+      )}
+      {completeError && (
+        <ErrorBanner
+          message={completeError}
+          onRetry={failedTaskId ? () => void handleComplete(failedTaskId) : undefined}
+        />
+      )}
       {tasksError && !coachLookupError && <ErrorBanner message={tasksError} onRetry={refreshData} />}
 
       {!loading && (

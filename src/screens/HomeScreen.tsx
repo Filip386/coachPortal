@@ -13,17 +13,14 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, loading, error, refreshAll } = useData();
+  const { coachName, players, events, invoices, tasks, loading, error, refreshAll, ensureFresh } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
 
-  // Screens unmount/remount as the bottom nav switches between them, so this
-  // fires every time the coach lands back on Home — e.g. after creating an
-  // event or another screen changes data — without needing to relaunch the
-  // app. Cached/previous data still renders immediately; this just
-  // revalidates it in the background.
+  // Show Context state immediately, then revalidate only Home's data when it
+  // is stale. In-flight requests are reused and all Dataverse reads are queued.
   useEffect(() => {
-    refreshAll().catch(() => {});
-  }, [refreshAll]);
+    void ensureFresh(["players", "events", "invoices", "tasks"]);
+  }, [ensureFresh]);
 
   const todayEvents = events
     .filter((e) => {

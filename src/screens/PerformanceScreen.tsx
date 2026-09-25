@@ -31,7 +31,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches } = useData();
+  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh } = useData();
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
@@ -63,6 +63,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [playerSaving, setPlayerSaving] = useState(false);
   const [playerSaveSuccess, setPlayerSaveSuccess] = useState(false);
   const [playerSaveError, setPlayerSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void ensureFresh([
+      "players",
+      "events",
+      "performances",
+      "generations",
+      "generationsToCoaches",
+    ]);
+  }, [ensureFresh]);
 
   const generationTabs = useMemo(() => {
     const seen = new Set<string>();

@@ -12,7 +12,7 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
-  const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches } = useData();
+  const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches, ensureFresh } = useData();
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
   const [genAutoSelected, setGenAutoSelected] = useState(false);
@@ -20,6 +20,15 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   const [genSearch, setGenSearch] = useState("");
   const [search, setSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void ensureFresh([
+      "players",
+      "performances",
+      "generations",
+      "generationsToCoaches",
+    ]);
+  }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);

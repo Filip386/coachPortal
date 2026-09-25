@@ -34,11 +34,15 @@ const invoiceContact = (inv: any): { key: string; name: string } => {
 };
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
-  const { invoices, loading, error, refreshInvoices } = useData();
+  const { invoices, loading, error, refreshInvoices, ensureFresh } = useData();
   const [selectedContactKey, setSelectedContactKey] = useState<string>("all");
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void ensureFresh(["invoices"]);
+  }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);
