@@ -13,7 +13,10 @@ interface CalendarScreenProps {
 }
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) => {
-  const { events, loading, error, refreshEvents, ensureFresh } = useData();
+  const { events, refreshEvents, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const screenLoading = isLoadingResources(["events"]);
+  const screenLoadError = hasResourceErrors(["events"]);
+  const screenError = getResourceError(["events"]);
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -92,10 +95,10 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
         }
       />
 
-      {loading && events.length === 0 && <LoadingSpinner label="Loading events…" />}
-      {error && events.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
+      {screenLoading && <LoadingSpinner label="Loading events…" />}
+      {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
 
-      {(!loading || events.length > 0) && (
+      {!screenLoading && !screenLoadError && (
         <>
           <div style={{ padding: "0 18px" }}>
             <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 22, padding: 16 }}>

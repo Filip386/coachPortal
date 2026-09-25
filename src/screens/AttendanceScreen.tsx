@@ -81,14 +81,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     coachLookupLoading,
     coachLookupError,
     isBackOffice,
-    loading,
-    error,
     refreshAttendances,
     refreshPerformances,
     allGenerations,
     generationsToCoaches,
     ensureFresh,
+    isLoadingResources,
+    hasResourceErrors,
+    getResourceError,
+    runDataverseRead,
+    runDataverseWrite,
   } = useData();
+
+  const screenLoading = isLoadingResources([
+    "players",
+    "events",
+    "attendances",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenLoadError = hasResourceErrors([
+    "players",
+    "events",
+    "attendances",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenError = getResourceError([
+    "players",
+    "events",
+    "attendances",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
 
   const [saving, setSaving] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
@@ -572,9 +600,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       };
 
       if (existing) {
-        const res = await Axm365_playereventperformancesService.update(
-          existing.axm365_playereventperformanceid,
-          payload as any
+        const res = await runDataverseWrite(
+          "Updating player performance",
+          () => Axm365_playereventperformancesService.update(
+            existing.axm365_playereventperformanceid,
+            payload as any
+          )
         );
 
         if (!res.success) {
@@ -585,13 +616,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           );
         }
       } else {
-        const res = await Axm365_playereventperformancesService.create({
-          ...payload,
+        const res = await runDataverseWrite(
+          "Creating player performance",
+          () => Axm365_playereventperformancesService.create({
+            ...payload,
 
-          "axm365_cr9be_Player@odata.bind": `/cr9be_players(${perfEditPlayerId})`,
+            "axm365_cr9be_Player@odata.bind": `/cr9be_players(${perfEditPlayerId})`,
 
-          "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
-        } as any);
+            "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
+          } as any)
+        );
 
         if (!res.success) {
           throw new Error(
@@ -745,19 +779,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         eventId: selectedEventId,
       });
 
-      const res = await Axm365_eventcoachattendancesService.create({
-        axm365_name: `${
-          coachName ?? "Coach"
-        } - ${new Date().toLocaleDateString()}`,
+      const res = await runDataverseWrite(
+        "Clocking in",
+        () => Axm365_eventcoachattendancesService.create({
+          axm365_name: `${
+            coachName ?? "Coach"
+          } - ${new Date().toLocaleDateString()}`,
 
-        axm365_clockin: new Date(),
+          axm365_clockin: new Date(),
 
-        // USE coachId
-        "axm365_Coach@odata.bind": `/cr9be_coachs(${coachId})`,
+          // USE coachId
+          "axm365_Coach@odata.bind": `/cr9be_coachs(${coachId})`,
 
-        // CURRENT EVENT
-        "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
-      } as any);
+          // CURRENT EVENT
+          "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
+        } as any)
+      );
 
       throwIfError(res, "Clock In");
 
@@ -797,9 +834,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           "[Clock] Create returned no record id — reading the row back by coach + event."
         );
 
-        const lookup = await Axm365_eventcoachattendancesService.getAll({
-          filter: `_axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
-        });
+        const lookup = await runDataverseRead(
+          "Confirming clock in",
+          () => Axm365_eventcoachattendancesService.getAll({
+            filter: `_axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+          })
+        );
 
         throwIfError(lookup, "Clock In (confirming the saved record)");
 
@@ -905,26 +945,32 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         );
 
         if (existing) {
-          const res = await Axm365_eventattendancesService.update(
-            existing.axm365_eventattendanceid,
-            {
-              axm365_name: p.cr9be_name,
+          const res = await runDataverseWrite(
+            `Updating attendance for ${p.cr9be_name}`,
+            () => Axm365_eventattendancesService.update(
+              existing.axm365_eventattendanceid,
+              {
+                axm365_name: p.cr9be_name,
 
-              axm365_attended: attended,
-            } as any
+                axm365_attended: attended,
+              } as any
+            )
           );
 
           throwIfError(res, `Update ${p.cr9be_name}`);
         } else {
-          const res = await Axm365_eventattendancesService.create({
-            axm365_name: p.cr9be_name,
+          const res = await runDataverseWrite(
+            `Creating attendance for ${p.cr9be_name}`,
+            () => Axm365_eventattendancesService.create({
+              axm365_name: p.cr9be_name,
 
-            "axm365_Player@odata.bind": `/cr9be_players(${playerId})`,
+              "axm365_Player@odata.bind": `/cr9be_players(${playerId})`,
 
-            "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
+              "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
 
-            axm365_attended: attended,
-          } as any);
+              axm365_attended: attended,
+            } as any)
+          );
 
           throwIfError(res, `Create ${p.cr9be_name}`);
         }
@@ -1237,7 +1283,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </div>
           </div>
 
-          {!loading && shownPlayers.length > 0 && (
+          {!screenLoading && !screenLoadError && shownPlayers.length > 0 && (
             <div
               style={{
                 marginTop: 20,
@@ -1307,14 +1353,19 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         </div>
       </div>
 
-      {loading && players.length === 0 && (
+      {screenLoading && (
         <LoadingSpinner label="Loading players…" />
       )}
 
-      {error && players.length === 0 && (
+      {screenError && (
         <ErrorBanner
-          message={error}
-          onRetry={() => refreshAttendances().catch(() => {})}
+          message={screenError}
+          onRetry={() =>
+            void ensureFresh(
+              ["players", "events", "attendances", "performances", "generations", "generationsToCoaches"],
+              { force: true }
+            )
+          }
         />
       )}
 
@@ -1330,7 +1381,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         <SuccessBanner message="Attendance saved successfully!" />
       )}
 
-      {(!loading || players.length > 0) &&
+      {!screenLoading &&
+        !screenLoadError &&
         shownPlayers.length > 0 &&
         (selectedEventId || initialEventId) && (
           <div
@@ -1621,7 +1673,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </div>
         )}
 
-      {!loading && !initialEventId && !todayEvent && events.length > 0 && (
+      {!screenLoading && !screenLoadError && !initialEventId && !todayEvent && events.length > 0 && (
         <div
           style={{
             padding: "48px 32px",
@@ -1706,7 +1758,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         </div>
       )}
 
-      {!loading &&
+      {!screenLoading &&
+        !screenLoadError &&
         shownPlayers.length === 0 &&
         (selectedEventId || initialEventId) && (
           <div

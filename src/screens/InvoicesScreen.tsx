@@ -34,7 +34,10 @@ const invoiceContact = (inv: any): { key: string; name: string } => {
 };
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
-  const { invoices, loading, error, refreshInvoices, ensureFresh } = useData();
+  const { invoices, refreshInvoices, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const screenLoading = isLoadingResources(["invoices"]);
+  const screenLoadError = hasResourceErrors(["invoices"]);
+  const screenError = getResourceError(["invoices"]);
   const [selectedContactKey, setSelectedContactKey] = useState<string>("all");
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -119,10 +122,10 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
         }
       />
 
-      {loading && invoices.length === 0 && <LoadingSpinner label="Loading invoices…" />}
-      {error && invoices.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
+      {screenLoading && <LoadingSpinner label="Loading invoices…" />}
+      {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
 
-      {(!loading || invoices.length > 0) && (
+      {!screenLoading && !screenLoadError && (
         <>
           <div style={{ padding: "0 22px" }}>
             <div style={{ background: COLORS.navy, color: "#fff", borderRadius: 22, padding: 20, position: "relative", overflow: "hidden" }}>

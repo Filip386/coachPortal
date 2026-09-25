@@ -56,6 +56,14 @@ export type DataResource =
   | "tasks";
 
 
+export type DataResourceStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "refreshing"
+  | "error";
+
+
 interface EnsureFreshOptions {
   force?: boolean;
   maxAgeMs?: number;
@@ -99,9 +107,13 @@ interface DataContextValue {
   tasksLoading: boolean;
   tasksError: string | null;
 
-  loading: boolean;
   loggedInCoachId: string | null;
   error: string | null;
+  resourceStatus: Record<DataResource, DataResourceStatus>;
+  resourceErrors: Partial<Record<DataResource, string>>;
+  isLoadingResources: (resources: DataResource[]) => boolean;
+  hasResourceErrors: (resources: DataResource[]) => boolean;
+  getResourceError: (resources: DataResource[]) => string | null;
 
   refreshPlayers: () => Promise<void>;
   refreshEvents: () => Promise<void>;
@@ -120,6 +132,18 @@ interface DataContextValue {
   /** Marks a task Completed in Dataverse and drops it from `tasks` — active
    *  tasks only are ever shown, so a completed one simply disappears. */
   completeTask: (taskId: string) => Promise<void>;
+  /** Queue a read made directly by a screen so it cannot overlap Context
+   *  requests in the Power Apps mobile Dataverse bridge. */
+  runDataverseRead: <T>(
+    label: string,
+    operation: () => Promise<T>
+  ) => Promise<T>;
+  /** Queue a user-initiated mutation. Writes are deliberately not retried:
+   *  a timed-out create may already have reached Dataverse. */
+  runDataverseWrite: <T>(
+    label: string,
+    operation: () => Promise<T>
+  ) => Promise<T>;
   refreshAll: () => Promise<void>;
 }
 
@@ -136,8 +160,18 @@ const CACHE = {
   performances: "cvf_performances",
   generations: "cvf_generations",
   generationsToCoaches: "cvf_generations_to_coaches",
-  tasks: "cvf_tasks",
 };
+
+
+const LEGACY_TASK_CACHE_KEY = "cvf_tasks";
+const TASK_CACHE_PREFIX = "cvf_tasks_v2";
+const TASK_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
+
+
+interface TaskCacheEnvelope {
+  cachedAt: number;
+  tasks: Tasks[];
+}
 
 
 // Which Dataverse environment the cached rows above were fetched from.
@@ -184,6 +218,83 @@ function writeCache<T>(key: string, data: T[]) {
 }
 
 
+function taskCacheKey(orgUrl: string, coachId: string): string {
+  return `${TASK_CACHE_PREFIX}:${encodeURIComponent(
+    orgUrl.trim().toLowerCase()
+  )}:${normalizeGuid(coachId)}`;
+}
+
+
+function readTaskCache(orgUrl: string | null, coachId: string): TaskCacheEnvelope | null {
+  if (!orgUrl || !coachId) return null;
+
+  try {
+    const key = taskCacheKey(orgUrl, coachId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as TaskCacheEnvelope;
+    if (
+      !Array.isArray(parsed?.tasks) ||
+      typeof parsed?.cachedAt !== "number" ||
+      Date.now() - parsed.cachedAt > TASK_CACHE_MAX_AGE_MS
+    ) {
+      localStorage.removeItem(key);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+
+function writeTaskCache(
+  orgUrl: string | null,
+  coachId: string | null,
+  tasks: Tasks[]
+) {
+  if (!orgUrl || !coachId) return;
+
+  try {
+    const value: TaskCacheEnvelope = {
+      cachedAt: Date.now(),
+      tasks,
+    };
+    localStorage.setItem(taskCacheKey(orgUrl, coachId), JSON.stringify(value));
+  } catch {}
+}
+
+
+function hasUsableCache(key: string): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw !== null && Array.isArray(JSON.parse(raw));
+  } catch {
+    return false;
+  }
+}
+
+
+function createInitialResourceStatus(): Record<DataResource, DataResourceStatus> {
+  return {
+    players: hasUsableCache(CACHE.players) ? "ready" : "idle",
+    events: hasUsableCache(CACHE.events) ? "ready" : "idle",
+    attendances: hasUsableCache(CACHE.attendances) ? "ready" : "idle",
+    invoices: hasUsableCache(CACHE.invoices) ? "ready" : "idle",
+    facilities: hasUsableCache(CACHE.facilities) ? "ready" : "idle",
+    performances: hasUsableCache(CACHE.performances) ? "ready" : "idle",
+    generations: hasUsableCache(CACHE.generations) ? "ready" : "idle",
+    generationsToCoaches: hasUsableCache(CACHE.generationsToCoaches)
+      ? "ready"
+      : "idle",
+    // The Task cache cannot be selected safely until Coach identity resolves.
+    tasks: "idle",
+  };
+}
+
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string" && error.trim()) return error;
 
@@ -200,20 +311,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 function normalizeGuid(value: string | null | undefined): string {
   return (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
-}
-
-
-async function retryReadOnce<T>(
-  label: string,
-  operation: () => Promise<T>
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (firstError) {
-    console.warn(`[CoachPortal] ${label} failed; retrying once.`, firstError);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    return operation();
-  }
 }
 
 
@@ -238,6 +335,82 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       }
     );
   });
+}
+
+
+const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
+
+
+function getErrorStatus(error: unknown): number | null {
+  const candidate = error as any;
+  const status =
+    candidate?.status ??
+    candidate?.statusCode ??
+    candidate?.response?.status ??
+    candidate?.error?.status;
+
+  return typeof status === "number" ? status : null;
+}
+
+
+function isTransientOperationError(error: unknown): boolean {
+  const message = getErrorMessage(error, "").toLowerCase();
+  const status = getErrorStatus(error);
+
+  return (
+    message.includes("cordova.exec is not a function") ||
+    message.includes("failed to acquire access token") ||
+    message.includes("network request failed") ||
+    message.includes("network error") ||
+    message.includes("failed to fetch") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("timed out") ||
+    status === 408 ||
+    status === 429 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+
+async function runWithTransientRetries<T>(
+  label: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  let retryIndex = 0;
+
+  while (true) {
+    try {
+      return await withTimeout(operation(), 20000, label);
+    } catch (operationError) {
+      if (!isTransientOperationError(operationError)) {
+        throw operationError;
+      }
+
+      const message = getErrorMessage(operationError, "").toLowerCase();
+      // A timed-out SDK request cannot be cancelled. Retry it only once to
+      // avoid creating several hidden requests. Mobile token/bridge failures
+      // reject immediately and can safely use the full warm-up schedule.
+      const retryDelays = message.includes("timed out")
+        ? MOBILE_RETRY_DELAYS_MS.slice(1, 2)
+        : MOBILE_RETRY_DELAYS_MS;
+
+      if (retryIndex >= retryDelays.length) {
+        throw operationError;
+      }
+
+      const delayMs = retryDelays[retryIndex];
+      retryIndex += 1;
+
+      console.warn(
+        `[CoachPortal] ${label} hit a temporary mobile-host error; retrying in ${delayMs}ms.`,
+        operationError
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 
@@ -298,8 +471,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       readCache(CACHE.generationsToCoaches)
     );
 
-  // Tasks are actionable and coach-specific, so never restore them from a
-  // previous mobile/browser session. They are fetched after coach resolution.
+  // Task cache restoration waits until the current Coach is resolved because
+  // the cache key is scoped by both Dataverse organization and Coach id.
   const [tasks, setTasks] = useState<Tasks[]>([]);
 
   const [tasksLoading, setTasksLoading] = useState(true);
@@ -307,26 +480,60 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [tasksError, setTasksError] = useState<string | null>(null);
 
 
-  // ---------------------------------------------------------
-  // CACHE / LOADING
-  //
-  // Computed once (lazy useState initializer), not on every render — this
-  // was previously a plain `const` recomputed from localStorage each
-  // render. Once the first refresh populated the cache, that recomputed
-  // value flipped from false to true, which changed the initial-load
-  // effect's dependency and made it re-run a second time for no reason.
-  // ---------------------------------------------------------
-
-  const [hasCache] = useState(
-    () =>
-      readCache(CACHE.players).length > 0 ||
-      readCache(CACHE.events).length > 0
-  );
-
-  const [loading, setLoading] = useState(!hasCache);
+  // A single app-wide loading boolean cannot tell whether the particular
+  // resources a screen needs have finished. Track each dataset independently
+  // so rapid navigation cannot turn an in-flight empty array into a false
+  // "no data" state.
+  const [resourceStatus, setResourceStatus] = useState<
+    Record<DataResource, DataResourceStatus>
+  >(createInitialResourceStatus);
+  const resourceHasUsableDataRef = useRef<Record<DataResource, boolean>>({
+    players: resourceStatus.players === "ready",
+    events: resourceStatus.events === "ready",
+    attendances: resourceStatus.attendances === "ready",
+    invoices: resourceStatus.invoices === "ready",
+    facilities: resourceStatus.facilities === "ready",
+    performances: resourceStatus.performances === "ready",
+    generations: resourceStatus.generations === "ready",
+    generationsToCoaches: resourceStatus.generationsToCoaches === "ready",
+    tasks: false,
+  });
+  const [resourceErrors, setResourceErrors] = useState<
+    Partial<Record<DataResource, string>>
+  >({});
 
   const [error, setError] =
     useState<string | null>(null);
+
+
+  const isLoadingResources = useCallback(
+    (resources: DataResource[]): boolean =>
+      resources.some(
+        (resource) =>
+          resourceStatus[resource] === "idle" ||
+          resourceStatus[resource] === "loading"
+      ),
+    [resourceStatus]
+  );
+
+
+  const hasResourceErrors = useCallback(
+    (resources: DataResource[]): boolean =>
+      resources.some((resource) => resourceStatus[resource] === "error"),
+    [resourceStatus]
+  );
+
+
+  const getResourceError = useCallback(
+    (resources: DataResource[]): string | null => {
+      for (const resource of resources) {
+        const resourceError = resourceErrors[resource];
+        if (resourceError) return resourceError;
+      }
+      return null;
+    },
+    [resourceErrors]
+  );
 
 
   // Android Power Apps can hang when generated Dataverse reads overlap.
@@ -340,13 +547,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const lastFetchedRef = useRef<Partial<Record<DataResource, number>>>({});
   const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
   const rolesInFlightRef = useRef<Promise<void> | null>(null);
+  const wasHiddenRef = useRef(false);
+  const dataverseOrgUrlRef = useRef<string | null>(null);
+  const activeCoachIdRef = useRef<string | null>(null);
+  const taskInFlightByCoachRef = useRef<Record<string, Promise<void>>>({});
 
 
   const enqueueDataverse = useCallback(
-    <T,>(label: string, operation: () => Promise<T>): Promise<T> => {
+    <T,>(
+      label: string,
+      operation: () => Promise<T>,
+      retryTransient = true
+    ): Promise<T> => {
       const run = dataverseQueueTailRef.current
         .catch(() => undefined)
-        .then(() => withTimeout(operation(), 20000, label));
+        .then(() =>
+          retryTransient
+            ? runWithTransientRetries(label, operation)
+            : withTimeout(operation(), 20000, label)
+        );
 
       dataverseQueueTailRef.current = run.then(
         () => undefined,
@@ -359,6 +578,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
 
+  const runDataverseRead = useCallback(
+    <T,>(label: string, operation: () => Promise<T>): Promise<T> =>
+      enqueueDataverse(label, operation, true),
+    [enqueueDataverse]
+  );
+
+
+  const runDataverseWrite = useCallback(
+    <T,>(label: string, operation: () => Promise<T>): Promise<T> =>
+      enqueueDataverse(label, operation, false),
+    [enqueueDataverse]
+  );
+
+
   const runResourceRefresh = useCallback(
     (
       resource: DataResource,
@@ -368,9 +601,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       const existing = resourceInFlightRef.current[resource];
       if (existing) return existing;
 
+      const hadUsableData = resourceHasUsableDataRef.current[resource];
+      setResourceErrors((current) => {
+        if (!current[resource]) return current;
+        const next = { ...current };
+        delete next[resource];
+        return next;
+      });
+      setResourceStatus((current) => ({
+        ...current,
+        [resource]: hadUsableData ? "refreshing" : "loading",
+      }));
+
       const request = enqueueDataverse(label, operation)
         .then(() => {
           lastFetchedRef.current[resource] = Date.now();
+          resourceHasUsableDataRef.current[resource] = true;
+          setResourceStatus((current) => ({
+            ...current,
+            [resource]: "ready",
+          }));
+        })
+        .catch((refreshError) => {
+          setResourceErrors((current) => ({
+            ...current,
+            [resource]: getErrorMessage(
+              refreshError,
+              `Failed to load ${resource}.`
+            ),
+          }));
+          setResourceStatus((current) => ({
+            ...current,
+            [resource]: hadUsableData ? "ready" : "error",
+          }));
+          throw refreshError;
         })
         .finally(() => {
           delete resourceInFlightRef.current[resource];
@@ -544,9 +808,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // ---------------------------------------------------------
   // REFRESH TASKS
   //
-  // Coach-scoped (unlike the tables above), so this can't join refreshAll —
-  // it has nothing to fetch until coachId resolves from the Contact → Coach
-  // lookup further down. Ordered by createdon (always populated, unlike
+  // Coach-scoped (unlike the tables above), so it becomes a no-op until
+  // coachId resolves from the Contact → Coach lookup further down. Ordered
+  // by createdon (always populated, unlike
   // sortdate which is only set once a task has a scheduled date) so the
   // most recently created task is always the one at the top.
   // ---------------------------------------------------------
@@ -558,42 +822,119 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       return;
     }
 
-    setTasksLoading(true);
+    const requestCoachId = normalizeGuid(coachId);
+    const existingRequest = taskInFlightByCoachRef.current[requestCoachId];
+    if (existingRequest) return existingRequest;
 
-    try {
-      await runResourceRefresh("tasks", "Loading tasks", async () => {
+    const hadUsableData = resourceHasUsableDataRef.current.tasks;
+    setTasksLoading(true);
+    setTasksError(null);
+    setResourceErrors((current) => {
+      if (!current.tasks) return current;
+      const next = { ...current };
+      delete next.tasks;
+      return next;
+    });
+    setResourceStatus((current) => ({
+      ...current,
+      tasks: hadUsableData ? "refreshing" : "loading",
+    }));
+
+    const request = enqueueDataverse("Loading tasks", async () => {
         const res = await TasksService.getAll({
-          filter: `statecode eq 0 and _regardingobjectid_value eq ${normalizeGuid(coachId)}`,
+          filter: `statecode eq 0 and _regardingobjectid_value eq ${requestCoachId}`,
           orderBy: ["createdon desc"],
         });
         const data = unwrapOrThrow<Tasks>(res);
 
+        // A response from a previous signed-in coach must never replace the
+        // current coach's list if the account changed while this was queued.
+        if (activeCoachIdRef.current !== requestCoachId) return;
+
         setTasks(data);
+        writeTaskCache(dataverseOrgUrlRef.current, requestCoachId, data);
+        lastFetchedRef.current.tasks = Date.now();
+        resourceHasUsableDataRef.current.tasks = true;
         setTasksError(null);
+        setResourceStatus((current) => ({
+          ...current,
+          tasks: "ready",
+        }));
+      })
+      .catch((err) => {
+        if (activeCoachIdRef.current === requestCoachId) {
+          console.error("[CoachPortal] Failed to load tasks:", err);
+          const message = getErrorMessage(err, "Failed to load tasks.");
+          setTasksError(message);
+          setResourceErrors((current) => ({
+            ...current,
+            tasks: message,
+          }));
+          setResourceStatus((current) => ({
+            ...current,
+            tasks: hadUsableData ? "ready" : "error",
+          }));
+        }
+        throw err;
+      })
+      .finally(() => {
+        delete taskInFlightByCoachRef.current[requestCoachId];
+        if (activeCoachIdRef.current === requestCoachId) {
+          setTasksLoading(false);
+        }
       });
-    } catch (err) {
-      console.error("[CoachPortal] Failed to load tasks:", err);
-      setTasksError(getErrorMessage(err, "Failed to load tasks."));
-      throw err;
-    } finally {
-      setTasksLoading(false);
-    }
-  }, [coachId, runResourceRefresh]);
+
+    taskInFlightByCoachRef.current[requestCoachId] = request;
+    return request;
+  }, [coachId, enqueueDataverse]);
 
 
   useEffect(() => {
 
     if (coachId) {
+      const normalizedCoachId = normalizeGuid(coachId);
+      activeCoachIdRef.current = normalizedCoachId;
+      delete lastFetchedRef.current.tasks;
 
+      const cached = readTaskCache(
+        dataverseOrgUrlRef.current,
+        normalizedCoachId
+      );
+      resourceHasUsableDataRef.current.tasks = cached !== null;
+      setTasks(cached?.tasks ?? []);
+      setTasksError(null);
+      setResourceErrors((current) => {
+        if (!current.tasks) return current;
+        const next = { ...current };
+        delete next.tasks;
+        return next;
+      });
+      setTasksLoading(true);
+      setResourceStatus((current) => ({
+        ...current,
+        tasks: cached ? "ready" : "idle",
+      }));
       void refreshTasks().catch(() => {});
 
     } else if (!coachLookupLoading) {
 
       // Coach lookup finished without a coachId. Never leave tasks from an
       // earlier session or coach visible.
+      activeCoachIdRef.current = null;
+      resourceHasUsableDataRef.current.tasks = true;
       setTasks([]);
       setTasksError(null);
+      setResourceErrors((current) => {
+        if (!current.tasks) return current;
+        const next = { ...current };
+        delete next.tasks;
+        return next;
+      });
       setTasksLoading(false);
+      setResourceStatus((current) => ({
+        ...current,
+        tasks: "ready",
+      }));
 
     }
 
@@ -603,12 +944,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // Marks Completed in Dataverse, then drops it locally — the list only
   // ever shows active tasks, so there is nothing to reconcile afterward.
   const completeTask = useCallback(async (taskId: string) => {
-    const res = await enqueueDataverse("Completing task", () =>
-      TasksService.update(taskId, {
+    await runDataverseWrite("Completing task", async () => {
+      const result = await TasksService.update(taskId, {
         statecode: 1,
         statuscode: 5,
-      })
-    ).catch((requestError) => {
+      });
+
+      if (!result.success) {
+        throw new Error(
+          getErrorMessage(
+            result.error,
+            "Dataverse could not complete the task."
+          )
+        );
+      }
+    }).catch((requestError) => {
       console.error("[CoachPortal] Complete Task request rejected:", {
         taskId,
         error: requestError,
@@ -618,22 +968,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     });
 
-    if (!res.success) {
-      console.error("[CoachPortal] Complete Task failed:", {
-        taskId,
-        result: res,
-        error: res.error,
-      });
-      throw new Error(
-        getErrorMessage(res.error, "Dataverse could not complete the task.")
-      );
-    }
-
     setTasks((prev) => {
-      return prev.filter((t) => t.activityid !== taskId);
+      const next = prev.filter((t) => t.activityid !== taskId);
+      writeTaskCache(dataverseOrgUrlRef.current, coachId, next);
+      return next;
     });
     lastFetchedRef.current.tasks = Date.now();
-  }, [enqueueDataverse]);
+  }, [coachId, runDataverseWrite]);
 
 
   // ---------------------------------------------------------
@@ -649,6 +990,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       return refreshAllInFlightRef.current;
     }
 
+    setError(null);
+
     const refreshers: Array<[DataResource, () => Promise<void>]> = [
       ["players", refreshPlayers],
       ["events", refreshEvents],
@@ -658,6 +1001,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       ["performances", refreshPerformances],
       ["generations", refreshGenerations],
       ["generationsToCoaches", refreshGenerationsToCoaches],
+      ["tasks", refreshTasks],
     ];
 
     const run = (async () => {
@@ -675,7 +1019,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
 
-      if (failures.length === refreshers.length) {
+      if (failures.length > 0) {
         setError(getErrorMessage(failures[0], "Failed to load data."));
       } else {
         setError(null);
@@ -695,6 +1039,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshPerformances,
     refreshGenerations,
     refreshGenerationsToCoaches,
+    refreshTasks,
   ]);
 
 
@@ -702,6 +1047,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     resources: DataResource[],
     options: EnsureFreshOptions = {}
   ): Promise<void> => {
+    setError(null);
+
     const refreshers: Record<DataResource, () => Promise<void>> = {
       players: refreshPlayers,
       events: refreshEvents,
@@ -737,11 +1084,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     }
 
-    if (failures.length > 0 && successfulRefreshes === 0) {
+    if (failures.length > 0) {
       setError(getErrorMessage(failures[0], "Failed to refresh data."));
     } else if (successfulRefreshes > 0) {
       setError(null);
     }
+
   }, [
     refreshPlayers,
     refreshEvents,
@@ -788,6 +1136,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         if (!orgUrl) return;
 
+        dataverseOrgUrlRef.current = orgUrl;
+
         let previous: string | null = null;
 
         try {
@@ -824,15 +1174,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setPerformances([]);
           setAllGenerations([]);
           setGenerationsToCoaches([]);
-          setTasks([]);
           lastFetchedRef.current = {};
+          resourceHasUsableDataRef.current = {
+            ...resourceHasUsableDataRef.current,
+            players: false,
+            events: false,
+            attendances: false,
+            invoices: false,
+            facilities: false,
+            performances: false,
+            generations: false,
+            generationsToCoaches: false,
+          };
+          setResourceStatus((current) => ({
+            players: "idle",
+            events: "idle",
+            attendances: "idle",
+            invoices: "idle",
+            facilities: "idle",
+            performances: "idle",
+            generations: "idle",
+            generationsToCoaches: "idle",
+            tasks: current.tasks,
+          }));
+          setResourceErrors((current) =>
+            current.tasks ? { tasks: current.tasks } : {}
+          );
         }
 
         try {
           localStorage.setItem(CACHE_ENV_KEY, orgUrl);
-          // Remove Task rows written by older versions of the app. Tasks are
-          // no longer trusted across sessions.
-          localStorage.removeItem(CACHE.tasks);
+          // Remove the old unscoped Task cache. The new cache uses a separate
+          // organization + Coach key and is restored only after identity is
+          // resolved.
+          localStorage.removeItem(LEGACY_TASK_CACHE_KEY);
         } catch {}
       })
 
@@ -851,89 +1226,33 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   // ---------------------------------------------------------
-  // INITIAL DATA LOAD
-  //
-  // IMPORTANT:
-  // This effect is AFTER refreshAll so refreshAll already
-  // exists when the effect is created.
-  //
-  // Runs once on mount and ALWAYS calls refreshAll() — even when cached
-  // data already exists. Cached data (if any) renders immediately (see the
-  // `loading` initializer above, which only blocks the UI when there is no
-  // cache), and this revalidates it in the background so screens like Home
-  // pick up changes made elsewhere without the user needing to restart the
-  // app or pull-to-refresh manually. Each refresh* function already fetches
-  // and writes its own entity independently (no wholesale clear), so this
-  // stays a targeted refresh, not a full reload.
-  // ---------------------------------------------------------
-
-  useEffect(() => {
-
-    let cancelled = false;
-
-
-    const loadData = async () => {
-
-      try {
-
-        await refreshAll();
-
-      } finally {
-
-        if (!cancelled) {
-
-          setLoading(false);
-
-        }
-
-      }
-
-    };
-
-
-    void loadData();
-
-
-    return () => {
-
-      cancelled = true;
-
-    };
-
-  }, [
-    refreshAll,
-  ]);
-
-
-  // ---------------------------------------------------------
   // REFRESH ON APP RESUME
   //
   // Covers the app being backgrounded and brought back to the foreground
   // (switching apps on mobile, switching browser tabs) without a full
-  // relaunch — the initial-load effect above only ever runs once per
-  // launch, so without this, data made stale while the app sat in the
-  // background would otherwise only refresh if the user fully signed out
-  // and back in.
+  // relaunch. Only resources already fetched during this session are checked;
+  // opening the app must not accidentally recreate a full startup refresh.
   // ---------------------------------------------------------
 
   useEffect(() => {
 
     const handleVisibilityChange = () => {
 
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "hidden") {
+        wasHiddenRef.current = true;
+        return;
+      }
 
-        void ensureFresh([
-          "players",
-          "events",
-          "attendances",
-          "invoices",
-          "facilities",
-          "performances",
-          "generations",
-          "generationsToCoaches",
-          "tasks",
-        ]);
+      if (document.visibilityState === "visible" && wasHiddenRef.current) {
+        wasHiddenRef.current = false;
 
+        const loadedResources = Object.keys(
+          lastFetchedRef.current
+        ) as DataResource[];
+
+        if (loadedResources.length > 0) {
+          void ensureFresh(loadedResources);
+        }
       }
 
     };
@@ -968,11 +1287,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     setCoachLookupError(null);
     setCoachId(null);
     setLoggedInCoachId(null);
+    activeCoachIdRef.current = null;
+    resourceHasUsableDataRef.current.tasks = false;
+    delete lastFetchedRef.current.tasks;
+    setTasks([]);
+    setTasksError(null);
+    setTasksLoading(true);
+    setResourceErrors((current) => {
+      if (!current.tasks) return current;
+      const next = { ...current };
+      delete next.tasks;
+      return next;
+    });
+    setResourceStatus((current) => ({
+      ...current,
+      tasks: "idle",
+    }));
 
 
-    await withTimeout(getContext(), 20000, "Loading your account")
+    await runWithTransientRetries("Loading your account", () => getContext())
 
       .then(async (ctx) => {
+
+        dataverseOrgUrlRef.current = ctx.app.dataverseOrgUrl ?? null;
 
         const fullName =
           ctx.user.fullName;
@@ -1029,16 +1366,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // Logged-in user email → Contact
           // -------------------------------------------------
 
-          const contacts = await retryReadOnce(
-            "Contact lookup",
+          const contacts = await enqueueDataverse(
+            "Looking up your Contact record",
             async () => {
-              const contactRes = await enqueueDataverse(
-                "Looking up your Contact record",
-                () => ContactsService.getAll({
-                  filter: `emailaddress1 eq '${normalizedEmail}'`,
-                })
-              );
-
+              const contactRes = await ContactsService.getAll({
+                filter: `emailaddress1 eq '${normalizedEmail}'`,
+              });
               return unwrapOrThrow<Contacts>(contactRes);
             }
           );
@@ -1093,18 +1426,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // Contact → Coach
           // -------------------------------------------------
 
-          const coaches = await retryReadOnce(
-            "Coach lookup",
+          const coaches = await enqueueDataverse(
+            "Looking up your Coach record",
             async () => {
-              const coachRes = await enqueueDataverse(
-                "Looking up your Coach record",
-                () => Cr9be_coachsService.getAll({
-                  filter:
-                    `statecode eq 0 and _cr9be_contact_value eq ${contactId}`,
-                  top: 2,
-                })
-              );
-
+              const coachRes = await Cr9be_coachsService.getAll({
+                filter:
+                  `statecode eq 0 and _cr9be_contact_value eq ${contactId}`,
+                top: 2,
+              });
               return unwrapOrThrow<Cr9be_coachs>(coachRes);
             }
           );
@@ -1154,12 +1483,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // Save Coach ID
           // -------------------------------------------------
 
-          setCoachId(
-            coach.cr9be_coachid
-          );
+          const resolvedCoachId = normalizeGuid(coach.cr9be_coachid);
+
+          activeCoachIdRef.current = resolvedCoachId;
+
+          setCoachId(resolvedCoachId);
 
           setLoggedInCoachId(
-            coach.cr9be_coachid
+            resolvedCoachId
           );
 
           setCoachLookupError(null);
@@ -1213,14 +1544,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   // Roles are lower priority than the user/Coach and screen data. Start this
   // only after the initial read sequence has settled, and use the same queue.
+  const initialHomeDataSettled = (
+    ["players", "events", "invoices"] as DataResource[]
+  ).every(
+    (resource) =>
+      resourceStatus[resource] === "ready" ||
+      resourceStatus[resource] === "error"
+  );
+
+
   useEffect(() => {
-    if (coachLookupLoading || loading || rolesLoaded || rolesInFlightRef.current) {
+    if (
+      coachLookupLoading ||
+      !initialHomeDataSettled ||
+      rolesLoaded ||
+      rolesInFlightRef.current
+    ) {
       return;
     }
 
     const run = (async () => {
       try {
-        const ctx = await withTimeout(getContext(), 20000, "Loading your account");
+        const ctx = await runWithTransientRetries(
+          "Loading your account",
+          () => getContext()
+        );
 
         if (!ctx.user.objectId) {
           setIsBackOffice(false);
@@ -1246,7 +1594,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     rolesInFlightRef.current = run;
   }, [
     coachLookupLoading,
-    loading,
+    initialHomeDataSettled,
     rolesLoaded,
     enqueueDataverse,
   ]);
@@ -1297,9 +1645,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         tasksError,
 
-        loading,
-
         error,
+
+        resourceStatus,
+
+        resourceErrors,
+
+        isLoadingResources,
+
+        hasResourceErrors,
+
+        getResourceError,
 
         refreshPlayers,
 
@@ -1324,6 +1680,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         ensureFresh,
 
         completeTask,
+
+        runDataverseRead,
+
+        runDataverseWrite,
 
         refreshAll,
 

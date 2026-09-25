@@ -31,7 +31,28 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, runDataverseWrite, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const screenLoading = isLoadingResources([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenLoadError = hasResourceErrors([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenError = getResourceError([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
@@ -264,17 +285,20 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       const ratingCode = 693080000 + (editRating - 1);
       // Always creates a new record — never overwrites a prior one — so the full
       // performance history is preserved for the "most recent" display.
-      const res = await Axm365_playereventperformancesService.create({
-        axm365_performancename: `${playerName} - ${selectedEvent?.axm365_name ?? "General"}`,
-        axm365_raiting: ratingCode as any,
-        axm365_technique: editTechnique,
-        axm365_effort: editEffort,
-        axm365_tacticalawareness: editTactical,
-        axm365_teamplay: editTeamPlay,
-        axm365_notes: editNotes,
-        "axm365_cr9be_Player@odata.bind": `/cr9be_players(${selectedId})`,
-        ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
-      } as any);
+      const res = await runDataverseWrite(
+        "Creating player performance",
+        () => Axm365_playereventperformancesService.create({
+          axm365_performancename: `${playerName} - ${selectedEvent?.axm365_name ?? "General"}`,
+          axm365_raiting: ratingCode as any,
+          axm365_technique: editTechnique,
+          axm365_effort: editEffort,
+          axm365_tacticalawareness: editTactical,
+          axm365_teamplay: editTeamPlay,
+          axm365_notes: editNotes,
+          "axm365_cr9be_Player@odata.bind": `/cr9be_players(${selectedId})`,
+          ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
+        } as any)
+      );
       if (!res.success) throw new Error((res.error as any)?.message ?? JSON.stringify(res.error) ?? "Create failed");
       await refreshPerformances().catch(() => {});
       setPerfSaveSuccess(true);
@@ -333,7 +357,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         changes.cr9be_number = numValue;
       }
       if (editPlayerPositionId) changes["cr9be_Position@odata.bind"] = `/cr9be_positions(${editPlayerPositionId})`;
-      const res = await Cr9be_playersService.update(player.cr9be_playerid, changes as any);
+      const res = await runDataverseWrite(
+        "Updating player",
+        () => Cr9be_playersService.update(player.cr9be_playerid, changes as any)
+      );
       if (!res.success) throw new Error((res.error as any)?.message ?? "Update failed");
       await refreshPlayers().catch(() => {});
       setPlayerSaveSuccess(true);
@@ -353,10 +380,20 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       <StatusBar />
       <ScreenHeader kicker="Player Stats" title="Performance" onBack={() => (goBack ? goBack() : go("home"))} />
 
-      {loading && players.length === 0 && <LoadingSpinner label="Loading players…" />}
-      {error && players.length === 0 && <ErrorBanner message={error} onRetry={() => refreshPlayers().catch(() => {})} />}
+      {screenLoading && <LoadingSpinner label="Loading players…" />}
+      {screenError && (
+        <ErrorBanner
+          message={screenError}
+          onRetry={() =>
+            void ensureFresh(
+              ["players", "events", "performances", "generations", "generationsToCoaches"],
+              { force: true }
+            )
+          }
+        />
+      )}
 
-      {(!loading || players.length > 0) && players.length > 0 && (
+      {!screenLoading && !screenLoadError && players.length > 0 && (
         <>
           {/* Generation filter */}
           {generationTabs.length > 0 && (
@@ -549,7 +586,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         </>
       )}
 
-      {!loading && players.length === 0 && (
+      {!screenLoading && !screenLoadError && players.length === 0 && (
         <div style={{ padding: 40, textAlign: "center", color: COLORS.mute }}>
           No players found. Please add players to your squad first.
         </div>

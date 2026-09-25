@@ -12,7 +12,25 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
-  const { players, performances, loading, error, refreshPlayers, coachId, allGenerations, generationsToCoaches, ensureFresh } = useData();
+  const { players, performances, coachId, allGenerations, generationsToCoaches, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const screenLoading = isLoadingResources([
+    "players",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenLoadError = hasResourceErrors([
+    "players",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenError = getResourceError([
+    "players",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
   const [genAutoSelected, setGenAutoSelected] = useState(false);
@@ -32,7 +50,10 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
 
   const refreshData = async () => {
     setRefreshing(true);
-    await refreshPlayers().catch(() => {});
+    await ensureFresh(
+      ["players", "performances", "generations", "generationsToCoaches"],
+      { force: true }
+    ).catch(() => {});
     setRefreshing(false);
   };
 
@@ -215,10 +236,10 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
         </div>
       )}
 
-      {loading && players.length === 0 && <LoadingSpinner label="Loading squad…" />}
-      {error && players.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
+      {screenLoading && <LoadingSpinner label="Loading squad…" />}
+      {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
 
-      {(!loading || players.length > 0) && (
+      {!screenLoading && !screenLoadError && (
         <div style={{ padding: "0 18px 30px", display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.length === 0 && (
             <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>

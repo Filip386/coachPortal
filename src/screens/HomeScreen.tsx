@@ -13,13 +13,30 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, loading, error, refreshAll, ensureFresh } = useData();
+  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
+  const homeLoading = isLoadingResources(["players", "events", "invoices"]);
+  const homeLoadError = hasResourceErrors(["players", "events", "invoices"]);
+  const homeError = getResourceError(["players", "events", "invoices"]);
 
-  // Show Context state immediately, then revalidate only Home's data when it
-  // is stale. In-flight requests are reused and all Dataverse reads are queued.
+  // Stage 1: immediately load only the data Home needs. Stage 2: if Home
+  // remains mounted for two seconds, revalidate the remaining stale resources
+  // in the background. Navigating away cancels only the second stage.
   useEffect(() => {
-    void ensureFresh(["players", "events", "invoices", "tasks"]);
+    void ensureFresh(["players", "events", "invoices"]);
+
+    const timer = window.setTimeout(() => {
+      void ensureFresh([
+        "attendances",
+        "facilities",
+        "performances",
+        "generations",
+        "generationsToCoaches",
+        "tasks",
+      ]);
+    }, 2000);
+
+    return () => window.clearTimeout(timer);
   }, [ensureFresh]);
 
   const todayEvents = events
@@ -105,8 +122,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             Buenos días,<br />
             <span style={{ color: COLORS.yellow }}>{firstName ? `${firstName}.` : "Coach."}</span>
           </h1>
-          {loading ? (
-            <div style={{ marginTop: 16, opacity: 0.6, fontFamily: monoStack, fontSize: 11 }}>Loading stats…</div>
+          {homeLoading || homeLoadError ? (
+            <div style={{ marginTop: 16, opacity: 0.6, fontFamily: monoStack, fontSize: 11 }}>
+              {homeLoadError ? "Stats unavailable" : "Loading stats…"}
+            </div>
           ) : (
             <div style={{ marginTop: 16, display: "flex", gap: 22 }}>
               <Stat label="Squad" value={String(squadCount)} />
@@ -119,9 +138,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         </div>
       </div>
 
-      {error && <ErrorBanner message={error} onRetry={refreshAll} />}
+      {homeError && <ErrorBanner message={homeError} onRetry={refreshAll} />}
 
-      {!loading && (
+      {!homeLoading && !homeLoadError && (
         <div style={{ padding: "0 18px", marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {todayEvents.length === 0 ? (
             <div
@@ -191,7 +210,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         </div>
       </div>
 
-      {!loading && upcoming.length > 0 && (
+      {!homeLoading && !homeLoadError && upcoming.length > 0 && (
         <div style={{ padding: "20px 22px 8px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <SectionTitle eyebrow="This Week" title="Upcoming" />
