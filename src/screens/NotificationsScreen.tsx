@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { RefreshCw, Check, Clock, BellOff } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { useData } from "../context/DataContext";
 
 interface NotificationsScreenProps {
@@ -25,13 +25,14 @@ const PRIORITY_COLOR: Record<number, string> = {
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, goBack }) => {
   const {
     tasks,
-    tasksLoading,
     tasksError,
     coachLookupLoading,
     coachLookupError,
     refreshCoach,
     ensureFresh,
     completeTask,
+    isLoadingResources,
+    hasStaleResources,
   } = useData();
   const [refreshing, setRefreshing] = useState(false);
   const [completingId, setCompletingId] = useState<string | null>(null);
@@ -71,7 +72,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, go
     }
   };
 
-  const loading = (coachLookupLoading || tasksLoading) && tasks.length === 0;
+  const loading = coachLookupLoading || isLoadingResources(["tasks"]);
+  const tasksStale = hasStaleResources(["tasks"]);
 
   return (
     <>
@@ -105,6 +107,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({ go, go
         />
       )}
       {tasksError && !coachLookupError && <ErrorBanner message={tasksError} onRetry={refreshData} />}
+      {tasksStale && <StaleDataNotice />}
 
       {!loading && (
         <div style={{ padding: "0 22px 30px", display: "flex", flexDirection: "column", gap: 10 }}>

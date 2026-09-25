@@ -26,6 +26,7 @@ import {
   LoadingSpinner,
   ErrorBanner,
   PlayerAvatar,
+  StaleDataNotice,
 } from "../components/shared";
 import {
   Tally,
@@ -88,6 +89,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     ensureFresh,
     isLoadingResources,
     hasResourceErrors,
+    hasStaleResources,
     getResourceError,
     runDataverseRead,
     runDataverseWrite,
@@ -110,6 +112,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     "generationsToCoaches",
   ]);
   const screenError = getResourceError([
+    "players",
+    "events",
+    "attendances",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenStale = hasStaleResources([
     "players",
     "events",
     "attendances",
@@ -1368,6 +1378,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           }
         />
       )}
+
+      {screenStale && <StaleDataNotice />}
 
       {writeError && (
         <ErrorBanner message={writeError} onRetry={saveAttendance} />

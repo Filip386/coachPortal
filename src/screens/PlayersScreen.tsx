@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { Search, RefreshCw, ChevronRight, ChevronDown, Star, X } from "lucide-react";
 import { COLORS, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
+import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
@@ -12,7 +12,7 @@ interface PlayersScreenProps {
 }
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
-  const { players, performances, coachId, allGenerations, generationsToCoaches, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const { players, performances, coachId, allGenerations, generationsToCoaches, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   const screenLoading = isLoadingResources([
     "players",
     "performances",
@@ -26,6 +26,12 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
     "generationsToCoaches",
   ]);
   const screenError = getResourceError([
+    "players",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenStale = hasStaleResources([
     "players",
     "performances",
     "generations",
@@ -238,6 +244,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
 
       {screenLoading && <LoadingSpinner label="Loading squad…" />}
       {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
+      {screenStale && <StaleDataNotice />}
 
       {!screenLoading && !screenLoadError && (
         <div style={{ padding: "0 18px 30px", display: "flex", flexDirection: "column", gap: 8 }}>

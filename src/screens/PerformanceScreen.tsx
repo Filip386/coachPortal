@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
+import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
 import { AttributeBar, AttributeSlider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
@@ -31,7 +31,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, runDataverseWrite, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   const screenLoading = isLoadingResources([
     "players",
     "events",
@@ -47,6 +47,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     "generationsToCoaches",
   ]);
   const screenError = getResourceError([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenStale = hasStaleResources([
     "players",
     "events",
     "performances",
@@ -392,6 +399,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           }
         />
       )}
+      {screenStale && <StaleDataNotice />}
 
       {!screenLoading && !screenLoadError && players.length > 0 && (
         <>

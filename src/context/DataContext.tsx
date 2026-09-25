@@ -61,6 +61,7 @@ export type DataResourceStatus =
   | "loading"
   | "ready"
   | "refreshing"
+  | "stale"
   | "error";
 
 
@@ -113,6 +114,7 @@ interface DataContextValue {
   resourceErrors: Partial<Record<DataResource, string>>;
   isLoadingResources: (resources: DataResource[]) => boolean;
   hasResourceErrors: (resources: DataResource[]) => boolean;
+  hasStaleResources: (resources: DataResource[]) => boolean;
   getResourceError: (resources: DataResource[]) => string | null;
 
   refreshPlayers: () => Promise<void>;
@@ -339,6 +341,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 
 const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
+const BACKGROUND_RETRY_DELAYS_MS = [15_000, 45_000, 120_000] as const;
 
 
 function getErrorStatus(error: unknown): number | null {
@@ -487,6 +490,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [resourceStatus, setResourceStatus] = useState<
     Record<DataResource, DataResourceStatus>
   >(createInitialResourceStatus);
+  const resourceStatusRef = useRef(resourceStatus);
+  resourceStatusRef.current = resourceStatus;
   const resourceHasUsableDataRef = useRef<Record<DataResource, boolean>>({
     players: resourceStatus.players === "ready",
     events: resourceStatus.events === "ready",
@@ -501,6 +506,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<DataResource, string>>
   >({});
+  const backgroundRetryTimersRef = useRef<
+    Partial<Record<DataResource, number>>
+  >({});
+  const backgroundRetryAttemptsRef = useRef<
+    Partial<Record<DataResource, number>>
+  >({});
+  const runResourceRefreshRef = useRef<
+    ((
+      resource: DataResource,
+      label: string,
+      operation: () => Promise<void>
+    ) => Promise<void>) | null
+  >(null);
+  const refreshTasksRef = useRef<(() => Promise<void>) | null>(null);
 
   const [error, setError] =
     useState<string | null>(null);
@@ -533,6 +552,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       return null;
     },
     [resourceErrors]
+  );
+
+
+  const hasStaleResources = useCallback(
+    (resources: DataResource[]): boolean =>
+      resources.some((resource) => resourceStatus[resource] === "stale"),
+    [resourceStatus]
+  );
+
+
+  const clearBackgroundRetry = useCallback((resource: DataResource) => {
+    const timer = backgroundRetryTimersRef.current[resource];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete backgroundRetryTimersRef.current[resource];
+    }
+  }, []);
+
+
+  const scheduleBackgroundRetry = useCallback(
+    (resource: DataResource, retry: () => void) => {
+      if (backgroundRetryTimersRef.current[resource] !== undefined) return;
+
+      const attempt = backgroundRetryAttemptsRef.current[resource] ?? 0;
+      const delayMs = BACKGROUND_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) return;
+
+      backgroundRetryAttemptsRef.current[resource] = attempt + 1;
+      backgroundRetryTimersRef.current[resource] = window.setTimeout(() => {
+        delete backgroundRetryTimersRef.current[resource];
+        retry();
+      }, delayMs);
+    },
+    []
   );
 
 
@@ -601,6 +654,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       const existing = resourceInFlightRef.current[resource];
       if (existing) return existing;
 
+      clearBackgroundRetry(resource);
       const hadUsableData = resourceHasUsableDataRef.current[resource];
       setResourceErrors((current) => {
         if (!current[resource]) return current;
@@ -617,22 +671,34 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         .then(() => {
           lastFetchedRef.current[resource] = Date.now();
           resourceHasUsableDataRef.current[resource] = true;
+          backgroundRetryAttemptsRef.current[resource] = 0;
           setResourceStatus((current) => ({
             ...current,
             [resource]: "ready",
           }));
         })
         .catch((refreshError) => {
-          setResourceErrors((current) => ({
-            ...current,
-            [resource]: getErrorMessage(
-              refreshError,
-              `Failed to load ${resource}.`
-            ),
-          }));
+          if (hadUsableData) {
+            // Cached data remains usable. Keep the large blocking error hidden
+            // and arrange a bounded delayed retry through the same queue.
+            scheduleBackgroundRetry(resource, () => {
+              const retryRefresh = runResourceRefreshRef.current;
+              if (retryRefresh) {
+                void retryRefresh(resource, label, operation).catch(() => {});
+              }
+            });
+          } else {
+            setResourceErrors((current) => ({
+              ...current,
+              [resource]: getErrorMessage(
+                refreshError,
+                `Failed to load ${resource}.`
+              ),
+            }));
+          }
           setResourceStatus((current) => ({
             ...current,
-            [resource]: hadUsableData ? "ready" : "error",
+            [resource]: hadUsableData ? "stale" : "error",
           }));
           throw refreshError;
         })
@@ -643,8 +709,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       resourceInFlightRef.current[resource] = request;
       return request;
     },
-    [enqueueDataverse]
+    [clearBackgroundRetry, enqueueDataverse, scheduleBackgroundRetry]
   );
+
+  runResourceRefreshRef.current = runResourceRefresh;
 
 
   // ---------------------------------------------------------
@@ -826,6 +894,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     const existingRequest = taskInFlightByCoachRef.current[requestCoachId];
     if (existingRequest) return existingRequest;
 
+    clearBackgroundRetry("tasks");
     const hadUsableData = resourceHasUsableDataRef.current.tasks;
     setTasksLoading(true);
     setTasksError(null);
@@ -855,6 +924,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         writeTaskCache(dataverseOrgUrlRef.current, requestCoachId, data);
         lastFetchedRef.current.tasks = Date.now();
         resourceHasUsableDataRef.current.tasks = true;
+        backgroundRetryAttemptsRef.current.tasks = 0;
         setTasksError(null);
         setResourceStatus((current) => ({
           ...current,
@@ -864,15 +934,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       .catch((err) => {
         if (activeCoachIdRef.current === requestCoachId) {
           console.error("[CoachPortal] Failed to load tasks:", err);
-          const message = getErrorMessage(err, "Failed to load tasks.");
-          setTasksError(message);
-          setResourceErrors((current) => ({
-            ...current,
-            tasks: message,
-          }));
+          if (hadUsableData) {
+            setTasksError(null);
+            scheduleBackgroundRetry("tasks", () => {
+              const retryTasks = refreshTasksRef.current;
+              if (retryTasks) void retryTasks().catch(() => {});
+            });
+          } else {
+            const message = getErrorMessage(err, "Failed to load tasks.");
+            setTasksError(message);
+            setResourceErrors((current) => ({
+              ...current,
+              tasks: message,
+            }));
+          }
           setResourceStatus((current) => ({
             ...current,
-            tasks: hadUsableData ? "ready" : "error",
+            tasks: hadUsableData ? "stale" : "error",
           }));
         }
         throw err;
@@ -886,7 +964,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     taskInFlightByCoachRef.current[requestCoachId] = request;
     return request;
-  }, [coachId, enqueueDataverse]);
+  }, [clearBackgroundRetry, coachId, enqueueDataverse, scheduleBackgroundRetry]);
+
+  refreshTasksRef.current = refreshTasks;
 
 
   useEffect(() => {
@@ -1068,7 +1148,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     for (const resource of uniqueResources) {
       const maxAgeMs = options.maxAgeMs ?? RESOURCE_MAX_AGE_MS[resource];
       const lastFetched = lastFetchedRef.current[resource] ?? 0;
-      const isFresh = Date.now() - lastFetched < maxAgeMs;
+      const isFresh =
+        resourceStatusRef.current[resource] !== "stale" &&
+        Date.now() - lastFetched < maxAgeMs;
 
       if (!options.force && isFresh) continue;
 
@@ -1166,6 +1248,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
           clearTableCaches();
 
+          (
+            [
+              "players",
+              "events",
+              "attendances",
+              "invoices",
+              "facilities",
+              "performances",
+              "generations",
+              "generationsToCoaches",
+            ] as DataResource[]
+          ).forEach((resource) => {
+            clearBackgroundRetry(resource);
+            backgroundRetryAttemptsRef.current[resource] = 0;
+          });
+
           setPlayers([]);
           setEvents([]);
           setAttendances([]);
@@ -1222,7 +1320,41 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       cancelled = true;
     };
 
+  }, [clearBackgroundRetry]);
+
+
+  // Cancel delayed retries when the provider unmounts.
+  useEffect(() => () => {
+    Object.values(backgroundRetryTimersRef.current).forEach((timer) => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    });
+    backgroundRetryTimersRef.current = {};
   }, []);
+
+
+  // If connectivity returns, retry only resources that are currently showing
+  // cached stale data. First-load failures remain explicit and user-driven.
+  useEffect(() => {
+    const handleOnline = () => {
+      const staleResources = (
+        Object.keys(resourceStatusRef.current) as DataResource[]
+      ).filter(
+        (resource) => resourceStatusRef.current[resource] === "stale"
+      );
+
+      staleResources.forEach((resource) => {
+        backgroundRetryAttemptsRef.current[resource] = 0;
+        clearBackgroundRetry(resource);
+      });
+
+      if (staleResources.length > 0) {
+        void ensureFresh(staleResources, { force: true });
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [clearBackgroundRetry, ensureFresh]);
 
 
   // ---------------------------------------------------------
@@ -1246,9 +1378,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       if (document.visibilityState === "visible" && wasHiddenRef.current) {
         wasHiddenRef.current = false;
 
-        const loadedResources = Object.keys(
-          lastFetchedRef.current
-        ) as DataResource[];
+        const loadedResources = (
+          Object.keys(resourceHasUsableDataRef.current) as DataResource[]
+        ).filter(
+          (resource) => resourceHasUsableDataRef.current[resource]
+        );
+
+        loadedResources.forEach((resource) => {
+          if (resourceStatusRef.current[resource] === "stale") {
+            backgroundRetryAttemptsRef.current[resource] = 0;
+            clearBackgroundRetry(resource);
+          }
+        });
 
         if (loadedResources.length > 0) {
           void ensureFresh(loadedResources);
@@ -1272,6 +1413,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
   }, [
+    clearBackgroundRetry,
     ensureFresh,
   ]);
 
@@ -1282,6 +1424,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshCoach = useCallback(async () => {
 
+    clearBackgroundRetry("tasks");
+    backgroundRetryAttemptsRef.current.tasks = 0;
     setError(null);
     setCoachLookupLoading(true);
     setCoachLookupError(null);
@@ -1534,7 +1678,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       });
 
-  }, [enqueueDataverse]);
+  }, [clearBackgroundRetry, enqueueDataverse]);
 
 
   useEffect(() => {
@@ -1549,6 +1693,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   ).every(
     (resource) =>
       resourceStatus[resource] === "ready" ||
+      resourceStatus[resource] === "stale" ||
       resourceStatus[resource] === "error"
   );
 
@@ -1654,6 +1799,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         isLoadingResources,
 
         hasResourceErrors,
+
+        hasStaleResources,
 
         getResourceError,
 

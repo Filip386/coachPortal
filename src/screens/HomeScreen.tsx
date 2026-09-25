@@ -3,7 +3,7 @@ import React, { useEffect } from "react";
 import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, SectionTitle, ActionTile, ErrorBanner } from "../components/shared";
+import { StatusBar, SectionTitle, ActionTile, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
@@ -13,11 +13,12 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
   const homeLoading = isLoadingResources(["players", "events", "invoices"]);
   const homeLoadError = hasResourceErrors(["players", "events", "invoices"]);
   const homeError = getResourceError(["players", "events", "invoices"]);
+  const homeStale = hasStaleResources(["players", "events", "invoices"]);
 
   // Stage 1: immediately load only the data Home needs. Stage 2: if Home
   // remains mounted for two seconds, revalidate the remaining stale resources
@@ -139,6 +140,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
       </div>
 
       {homeError && <ErrorBanner message={homeError} onRetry={refreshAll} />}
+      {homeStale && <StaleDataNotice />}
 
       {!homeLoading && !homeLoadError && (
         <div style={{ padding: "0 18px", marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>

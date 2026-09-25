@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { RefreshCw, ChevronDown, User, Search } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { PillStat } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
@@ -34,10 +34,11 @@ const invoiceContact = (inv: any): { key: string; name: string } => {
 };
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
-  const { invoices, refreshInvoices, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const { invoices, refreshInvoices, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   const screenLoading = isLoadingResources(["invoices"]);
   const screenLoadError = hasResourceErrors(["invoices"]);
   const screenError = getResourceError(["invoices"]);
+  const screenStale = hasStaleResources(["invoices"]);
   const [selectedContactKey, setSelectedContactKey] = useState<string>("all");
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -124,6 +125,7 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
 
       {screenLoading && <LoadingSpinner label="Loading invoices…" />}
       {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
+      {screenStale && <StaleDataNotice />}
 
       {!screenLoading && !screenLoadError && (
         <>

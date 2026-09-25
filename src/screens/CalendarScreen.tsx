@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, Plus, ClipboardCheck, MapPin } fr
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
@@ -13,10 +13,11 @@ interface CalendarScreenProps {
 }
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) => {
-  const { events, refreshEvents, ensureFresh, isLoadingResources, hasResourceErrors, getResourceError } = useData();
+  const { events, refreshEvents, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   const screenLoading = isLoadingResources(["events"]);
   const screenLoadError = hasResourceErrors(["events"]);
   const screenError = getResourceError(["events"]);
+  const screenStale = hasStaleResources(["events"]);
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -97,6 +98,7 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
 
       {screenLoading && <LoadingSpinner label="Loading events…" />}
       {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
+      {screenStale && <StaleDataNotice />}
 
       {!screenLoading && !screenLoadError && (
         <>
