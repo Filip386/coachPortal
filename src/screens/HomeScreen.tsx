@@ -5,20 +5,26 @@ import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, SectionTitle, ActionTile, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
-import { useData } from "../context/DataContext";
+import { useData, type DataResourceStatus } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
 }
 
+const hasUsableData = (status: DataResourceStatus): boolean =>
+  status === "ready" || status === "refreshing" || status === "stale";
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, resourceStatus, hasStaleResources, getResourceError } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
-  const homeLoading = isLoadingResources(["players", "events", "invoices"]);
-  const homeLoadError = hasResourceErrors(["players", "events", "invoices"]);
   const homeError = getResourceError(["players", "events", "invoices"]);
   const homeStale = hasStaleResources(["players", "events", "invoices"]);
+  const playersAvailable = hasUsableData(resourceStatus.players);
+  const eventsAvailable = hasUsableData(resourceStatus.events);
+  const invoicesAvailable = hasUsableData(resourceStatus.invoices);
+  const eventsLoading =
+    resourceStatus.events === "idle" || resourceStatus.events === "loading";
 
   // Stage 1: immediately load only the data Home needs. Stage 2: if Home
   // remains mounted for two seconds, revalidate the remaining stale resources
@@ -123,26 +129,30 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             Buenos días,<br />
             <span style={{ color: COLORS.yellow }}>{firstName ? `${firstName}.` : "Coach."}</span>
           </h1>
-          {homeLoading || homeLoadError ? (
-            <div style={{ marginTop: 16, opacity: 0.6, fontFamily: monoStack, fontSize: 11 }}>
-              {homeLoadError ? "Stats unavailable" : "Loading stats…"}
-            </div>
-          ) : (
-            <div style={{ marginTop: 16, display: "flex", gap: 22 }}>
-              <Stat label="Squad" value={String(squadCount)} />
-              <Divider />
-              <Stat label="Events" value={String(events.length)} />
-              <Divider />
-              <Stat label="Overdue" value={String(overdueInvoices.length)} warn={overdueInvoices.length > 0} />
-            </div>
-          )}
+          <div style={{ marginTop: 16, display: "flex", gap: 22 }}>
+            <Stat label="Squad" value={playersAvailable ? String(squadCount) : "—"} />
+            <Divider />
+            <Stat label="Events" value={eventsAvailable ? String(events.length) : "—"} />
+            <Divider />
+            <Stat
+              label="Overdue"
+              value={invoicesAvailable ? String(overdueInvoices.length) : "—"}
+              warn={invoicesAvailable && overdueInvoices.length > 0}
+            />
+          </div>
         </div>
       </div>
 
       {homeError && <ErrorBanner message={homeError} onRetry={refreshAll} />}
       {homeStale && <StaleDataNotice />}
 
-      {!homeLoading && !homeLoadError && (
+      {eventsLoading && (
+        <div style={{ padding: "16px 22px 0", color: COLORS.mute, fontFamily: monoStack, fontSize: 11 }}>
+          Loading events…
+        </div>
+      )}
+
+      {eventsAvailable && (
         <div style={{ padding: "0 18px", marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {todayEvents.length === 0 ? (
             <div
@@ -184,7 +194,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                     </div>
                   </div>
                   <div style={{ textAlign: "right", fontFamily: displayStack }}>
-                    <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{squadCount}</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{playersAvailable ? squadCount : "—"}</div>
                     <div style={{ fontSize: 9.5, fontFamily: monoStack, letterSpacing: "0.16em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>Players</div>
                   </div>
                 </div>
@@ -207,12 +217,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
           <ActionTile color={COLORS.navy} text="#fff" icon={Plus} title="Create Event" sub="Schedule a session" onClick={() => go("create")} />
           <ActionTile color={COLORS.yellow} text={COLORS.navy} icon={TrendingUp} title="Performance" sub="Latest stats & ratings" onClick={() => go("performance")} />
-          <ActionTile color="#fff" text={COLORS.navy} icon={CircleDollarSign} title="Invoices" sub={overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue` : "All clear"} onClick={() => go("invoices")} bordered />
-          <ActionTile color="#fff" text={COLORS.navy} icon={Users} title="My Squad" sub={`${squadCount} players`} onClick={() => go("players")} bordered />
+          <ActionTile color="#fff" text={COLORS.navy} icon={CircleDollarSign} title="Invoices" sub={invoicesAvailable ? (overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue` : "All clear") : "Loading…"} onClick={() => go("invoices")} bordered />
+          <ActionTile color="#fff" text={COLORS.navy} icon={Users} title="My Squad" sub={playersAvailable ? `${squadCount} players` : "Loading…"} onClick={() => go("players")} bordered />
         </div>
       </div>
 
-      {!homeLoading && !homeLoadError && upcoming.length > 0 && (
+      {eventsAvailable && upcoming.length > 0 && (
         <div style={{ padding: "20px 22px 8px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <SectionTitle eyebrow="This Week" title="Upcoming" />

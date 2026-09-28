@@ -71,13 +71,33 @@ interface EnsureFreshOptions {
 }
 
 
+export interface GuardianContactDetails {
+  name: string | null;
+  phone: string | null;
+}
+
+
+export interface GuardianContactCacheSnapshot {
+  details: GuardianContactDetails;
+  isFresh: boolean;
+}
+
+
+interface GuardianContactOptions {
+  force?: boolean;
+}
+
+
 interface DataContextValue {
   coachName: string | null;
   coachId: string | null;
+  /** True once environment + signed-in account are known, allowing guardian
+   *  cache access without waiting for Contact → Coach resolution. */
+  guardianCacheReady: boolean;
 
-  /** True until the signed-in user's email → Contact → Coach lookup has
-   *  finished (success or failure). Lets callers tell "still resolving"
-   *  apart from "genuinely has no linked Coach record". */
+  /** True until a usable Coach identity is available. A saved identity can
+   *  make this false immediately while live Contact → Coach validation keeps
+   *  running in the background. */
   coachLookupLoading: boolean;
 
   /** Specific reason the Contact → Coach lookup didn't resolve a coachId
@@ -140,6 +160,17 @@ interface DataContextValue {
     label: string,
     operation: () => Promise<T>
   ) => Promise<T>;
+  /** Returns a saved guardian immediately when available, together with its
+   *  freshness. Cache identity is scoped to environment + account + Contact. */
+  getCachedGuardianContact: (
+    contactId: string
+  ) => GuardianContactCacheSnapshot | null;
+  /** Returns a guardian Contact through the shared Dataverse queue. Fresh
+   *  cached values avoid a read; force=true revalidates a stale saved value. */
+  getGuardianContact: (
+    contactId: string,
+    options?: GuardianContactOptions
+  ) => Promise<GuardianContactDetails>;
   /** Queue a user-initiated mutation. Writes are deliberately not retried:
    *  a timed-out create may already have reached Dataverse. */
   runDataverseWrite: <T>(
@@ -168,11 +199,19 @@ const CACHE = {
 const LEGACY_TASK_CACHE_KEY = "cvf_tasks";
 const TASK_CACHE_PREFIX = "cvf_tasks_v2";
 const TASK_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
+const COACH_IDENTITY_CACHE_PREFIX = "cvf_coach_identity_v1";
+const COACH_IDENTITY_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 
 interface TaskCacheEnvelope {
   cachedAt: number;
   tasks: Tasks[];
+}
+
+
+interface CoachIdentityCacheEnvelope {
+  cachedAt: number;
+  coachId: string;
 }
 
 
@@ -269,6 +308,77 @@ function writeTaskCache(
 }
 
 
+function coachIdentityCacheKey(orgUrl: string, userKey: string): string {
+  return `${COACH_IDENTITY_CACHE_PREFIX}:${encodeURIComponent(
+    orgUrl.trim().toLowerCase()
+  )}:${encodeURIComponent(userKey.trim().toLowerCase())}`;
+}
+
+
+function readCoachIdentityCache(
+  orgUrl: string | null,
+  userKey: string
+): CoachIdentityCacheEnvelope | null {
+  if (!orgUrl || !userKey) return null;
+
+  try {
+    const key = coachIdentityCacheKey(orgUrl, userKey);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as CoachIdentityCacheEnvelope;
+    const normalizedCoachId = normalizeGuid(parsed?.coachId);
+    if (
+      !normalizedCoachId ||
+      typeof parsed?.cachedAt !== "number" ||
+      Date.now() - parsed.cachedAt > COACH_IDENTITY_CACHE_RETENTION_MS
+    ) {
+      localStorage.removeItem(key);
+      return null;
+    }
+
+    return {
+      cachedAt: parsed.cachedAt,
+      coachId: normalizedCoachId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+function writeCoachIdentityCache(
+  orgUrl: string | null,
+  userKey: string,
+  coachId: string
+): void {
+  const normalizedCoachId = normalizeGuid(coachId);
+  if (!orgUrl || !userKey || !normalizedCoachId) return;
+
+  try {
+    const value: CoachIdentityCacheEnvelope = {
+      cachedAt: Date.now(),
+      coachId: normalizedCoachId,
+    };
+    localStorage.setItem(
+      coachIdentityCacheKey(orgUrl, userKey),
+      JSON.stringify(value)
+    );
+  } catch {}
+}
+
+
+function removeCoachIdentityCache(
+  orgUrl: string | null,
+  userKey: string
+): void {
+  if (!orgUrl || !userKey) return;
+  try {
+    localStorage.removeItem(coachIdentityCacheKey(orgUrl, userKey));
+  } catch {}
+}
+
+
 function hasUsableCache(key: string): boolean {
   try {
     const raw = localStorage.getItem(key);
@@ -342,6 +452,40 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
 const BACKGROUND_RETRY_DELAYS_MS = [15_000, 45_000, 120_000] as const;
+const GUARDIAN_CACHE_PREFIX = "cvf_guardian_v2";
+const GUARDIAN_CACHE_FRESH_MS = 30 * 60_000;
+const GUARDIAN_CACHE_RETENTION_MS = 24 * 60 * 60_000;
+
+
+interface GuardianContactCacheEnvelope {
+  cachedAt: number;
+  details: GuardianContactDetails;
+}
+
+
+function guardianContactCacheKey(
+  orgUrl: string,
+  userKey: string,
+  contactId: string
+): string {
+  return `${GUARDIAN_CACHE_PREFIX}:${encodeURIComponent(
+    orgUrl.trim().toLowerCase()
+  )}:${encodeURIComponent(userKey.trim().toLowerCase())}:${normalizeGuid(contactId)}`;
+}
+
+
+function isGuardianCacheEnvelope(
+  value: unknown
+): value is GuardianContactCacheEnvelope {
+  const candidate = value as GuardianContactCacheEnvelope | null;
+  return Boolean(
+    candidate &&
+      typeof candidate.cachedAt === "number" &&
+      candidate.details &&
+      (typeof candidate.details.name === "string" || candidate.details.name === null) &&
+      (typeof candidate.details.phone === "string" || candidate.details.phone === null)
+  );
+}
 
 
 function getErrorStatus(error: unknown): number | null {
@@ -428,6 +572,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const [coachId, setCoachId] =
     useState<string | null>(null);
+
+  const [guardianCacheReady, setGuardianCacheReady] = useState(false);
 
   const [coachLookupLoading, setCoachLookupLoading] = useState(true);
 
@@ -602,8 +748,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const rolesInFlightRef = useRef<Promise<void> | null>(null);
   const wasHiddenRef = useRef(false);
   const dataverseOrgUrlRef = useRef<string | null>(null);
+  const guardianCacheUserKeyRef = useRef<string | null>(null);
   const activeCoachIdRef = useRef<string | null>(null);
   const taskInFlightByCoachRef = useRef<Record<string, Promise<void>>>({});
+  const guardianContactCacheRef = useRef<
+    Map<string, GuardianContactCacheEnvelope>
+  >(new Map());
+  const guardianContactInFlightRef = useRef<
+    Map<string, Promise<GuardianContactDetails>>
+  >(new Map());
 
 
   const enqueueDataverse = useCallback(
@@ -642,6 +795,142 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     <T,>(label: string, operation: () => Promise<T>): Promise<T> =>
       enqueueDataverse(label, operation, false),
     [enqueueDataverse]
+  );
+
+
+  const getGuardianCacheKey = useCallback((contactId: string): string | null => {
+    const orgUrl = dataverseOrgUrlRef.current;
+    const userKey = guardianCacheUserKeyRef.current;
+    const normalizedContactId = normalizeGuid(contactId);
+
+    if (!orgUrl || !userKey || !normalizedContactId) return null;
+    return guardianContactCacheKey(orgUrl, userKey, normalizedContactId);
+  }, []);
+
+
+  const readGuardianContactCache = useCallback(
+    (contactId: string): GuardianContactCacheSnapshot | null => {
+      const key = getGuardianCacheKey(contactId);
+      if (!key) return null;
+
+      let cached = guardianContactCacheRef.current.get(key) ?? null;
+
+      if (!cached) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw) as unknown;
+            if (isGuardianCacheEnvelope(parsed)) {
+              cached = parsed;
+              guardianContactCacheRef.current.set(key, parsed);
+            } else {
+              localStorage.removeItem(key);
+            }
+          }
+        } catch {}
+      }
+
+      if (!cached) return null;
+
+      const ageMs = Date.now() - cached.cachedAt;
+      if (ageMs > GUARDIAN_CACHE_RETENTION_MS) {
+        guardianContactCacheRef.current.delete(key);
+        try {
+          localStorage.removeItem(key);
+        } catch {}
+        return null;
+      }
+
+      return {
+        details: cached.details,
+        isFresh: ageMs < GUARDIAN_CACHE_FRESH_MS,
+      };
+    },
+    [getGuardianCacheKey]
+  );
+
+
+  const writeGuardianContactCache = useCallback(
+    (key: string, details: GuardianContactDetails): void => {
+      const value: GuardianContactCacheEnvelope = {
+        cachedAt: Date.now(),
+        details,
+      };
+      guardianContactCacheRef.current.set(key, value);
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch {}
+    },
+    []
+  );
+
+
+  const getCachedGuardianContact = useCallback(
+    (contactId: string): GuardianContactCacheSnapshot | null =>
+      readGuardianContactCache(contactId),
+    [readGuardianContactCache]
+  );
+
+
+  const getGuardianContact = useCallback(
+    (
+      contactId: string,
+      options: GuardianContactOptions = {}
+    ): Promise<GuardianContactDetails> => {
+      const normalizedId = normalizeGuid(contactId);
+      if (!normalizedId) {
+        return Promise.reject(new Error("Guardian Contact id is missing."));
+      }
+
+      const cacheKey = getGuardianCacheKey(normalizedId);
+      if (!cacheKey) {
+        return Promise.reject(
+          new Error("Your signed-in account is still loading. Please try again shortly.")
+        );
+      }
+
+      const cached = readGuardianContactCache(normalizedId);
+      if (!options.force && cached?.isFresh) {
+        return Promise.resolve(cached.details);
+      }
+
+      const existing = guardianContactInFlightRef.current.get(cacheKey);
+      if (existing) return existing;
+
+      const request = runDataverseRead(
+        "Loading guardian details",
+        async () => {
+          const res = await ContactsService.get(normalizedId, {
+            select: ["fullname", "mobilephone", "telephone1"],
+          });
+
+          if (!res.success || !res.data) {
+            throw new Error(
+              getErrorMessage(
+                res.error,
+                "Failed to load guardian details."
+              )
+            );
+          }
+
+          const details: GuardianContactDetails = {
+            name: res.data.fullname || null,
+            phone: res.data.mobilephone || res.data.telephone1 || null,
+          };
+          // Use the scope captured when this request began. If account/coach
+          // identity changes before it finishes, the response cannot leak
+          // into the new coach's cache.
+          writeGuardianContactCache(cacheKey, details);
+          return details;
+        }
+      ).finally(() => {
+        guardianContactInFlightRef.current.delete(cacheKey);
+      });
+
+      guardianContactInFlightRef.current.set(cacheKey, request);
+      return request;
+    },
+    [getGuardianCacheKey, readGuardianContactCache, runDataverseRead, writeGuardianContactCache]
   );
 
 
@@ -1219,6 +1508,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         if (!orgUrl) return;
 
         dataverseOrgUrlRef.current = orgUrl;
+        const contextEmail = (ctx.user.userPrincipalName ?? "")
+          .trim()
+          .toLowerCase();
+        const contextUserKey = normalizeGuid(ctx.user.objectId) || contextEmail;
+        guardianCacheUserKeyRef.current = contextUserKey || null;
+        setGuardianCacheReady(Boolean(contextUserKey));
 
         let previous: string | null = null;
 
@@ -1247,6 +1542,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           );
 
           clearTableCaches();
+          guardianContactCacheRef.current.clear();
+          guardianContactInFlightRef.current.clear();
 
           (
             [
@@ -1422,16 +1719,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // LOGGED-IN USER → CONTACT → COACH
   // ---------------------------------------------------------
 
-  const refreshCoach = useCallback(async () => {
-
+  const clearResolvedCoach = useCallback(() => {
     clearBackgroundRetry("tasks");
     backgroundRetryAttemptsRef.current.tasks = 0;
-    setError(null);
-    setCoachLookupLoading(true);
-    setCoachLookupError(null);
+    activeCoachIdRef.current = null;
     setCoachId(null);
     setLoggedInCoachId(null);
-    activeCoachIdRef.current = null;
     resourceHasUsableDataRef.current.tasks = false;
     delete lastFetchedRef.current.tasks;
     setTasks([]);
@@ -1447,19 +1740,36 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       ...current,
       tasks: "idle",
     }));
+  }, [clearBackgroundRetry]);
+
+  const refreshCoach = useCallback(async () => {
+
+    clearBackgroundRetry("tasks");
+    backgroundRetryAttemptsRef.current.tasks = 0;
+    setError(null);
+    const hadUsableCoach = Boolean(activeCoachIdRef.current);
+    setCoachLookupLoading(!hadUsableCoach);
+    setCoachLookupError(null);
+    if (!hadUsableCoach) clearResolvedCoach();
 
 
     await runWithTransientRetries("Loading your account", () => getContext())
 
       .then(async (ctx) => {
 
-        dataverseOrgUrlRef.current = ctx.app.dataverseOrgUrl ?? null;
+        const orgUrl = ctx.app.dataverseOrgUrl ?? null;
+        dataverseOrgUrlRef.current = orgUrl;
 
         const fullName =
           ctx.user.fullName;
 
         const email =
           ctx.user.userPrincipalName;
+
+        const normalizedEmail = (email ?? "").trim().toLowerCase();
+        const userKey = normalizeGuid(ctx.user.objectId) || normalizedEmail;
+        guardianCacheUserKeyRef.current = userKey || null;
+        setGuardianCacheReady(Boolean(orgUrl && userKey));
 
 
         console.log(
@@ -1498,11 +1808,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
 
+        let restoredCoachId: string | null = null;
+
         try {
 
-          // Normalize email
-          const normalizedEmail =
-            email.trim().toLowerCase();
+          // Restore the last verified Coach for this exact Dataverse
+          // organization and signed-in account. This is only a startup hint:
+          // the live Contact → Coach lookup below still runs every launch.
+          const cachedIdentity = readCoachIdentityCache(orgUrl, userKey);
+          if (cachedIdentity) {
+            restoredCoachId = cachedIdentity.coachId;
+            activeCoachIdRef.current = restoredCoachId;
+            setCoachId(restoredCoachId);
+            setLoggedInCoachId(restoredCoachId);
+            setCoachLookupError(null);
+            setCoachLookupLoading(false);
+          }
 
 
           // -------------------------------------------------
@@ -1544,6 +1865,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
               email
             );
 
+            removeCoachIdentityCache(orgUrl, userKey);
+            clearResolvedCoach();
             setCoachLookupError(
               `No Dataverse contact found for ${email}.`
             );
@@ -1597,6 +1920,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
               contactId
             );
 
+            removeCoachIdentityCache(orgUrl, userKey);
+            clearResolvedCoach();
             setCoachLookupError(
               `No Coach record is linked to ${
                 contact.fullname ?? "your contact"
@@ -1629,6 +1954,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
           const resolvedCoachId = normalizeGuid(coach.cr9be_coachid);
 
+          if (!resolvedCoachId) {
+            throw new Error("The linked Coach record has no valid id.");
+          }
+
+          writeCoachIdentityCache(orgUrl, userKey, resolvedCoachId);
+
           activeCoachIdRef.current = resolvedCoachId;
 
           setCoachId(resolvedCoachId);
@@ -1648,11 +1979,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             err
           );
 
-          setCoachLookupError(
-            err instanceof Error
-              ? err.message
-              : "Failed to look up your Coach record."
-          );
+          if (restoredCoachId || activeCoachIdRef.current) {
+            // Keep usable saved identity and its Coach-scoped Task cache.
+            // A temporary validation failure must not blank the application.
+            setCoachLookupError(null);
+          } else {
+            setCoachLookupError(
+              err instanceof Error
+                ? err.message
+                : "Failed to look up your Coach record."
+            );
+          }
 
           setCoachLookupLoading(false);
 
@@ -1668,17 +2005,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           err
         );
 
-        setCoachLookupError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load your account information."
-        );
+        if (activeCoachIdRef.current) {
+          setCoachLookupError(null);
+        } else {
+          setCoachLookupError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load your account information."
+          );
+        }
 
         setCoachLookupLoading(false);
 
       });
 
-  }, [clearBackgroundRetry, enqueueDataverse]);
+  }, [clearBackgroundRetry, clearResolvedCoach, enqueueDataverse]);
 
 
   useEffect(() => {
@@ -1758,6 +2099,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         coachId,
 
+        guardianCacheReady,
+
         coachLookupLoading,
 
         coachLookupError,
@@ -1829,6 +2172,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         completeTask,
 
         runDataverseRead,
+
+        getCachedGuardianContact,
+
+        getGuardianContact,
 
         runDataverseWrite,
 

@@ -1,13 +1,13 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown } from "lucide-react";
+import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown, User, Phone } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
 import { AttributeBar, AttributeSlider } from "../components/ui";
-import { useData } from "../context/DataContext";
+import { useData, type GuardianContactDetails } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
@@ -31,21 +31,12 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
-  const screenLoading = isLoadingResources([
-    "players",
-    "events",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenLoadError = hasResourceErrors([
-    "players",
-    "events",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, guardianCacheReady, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  // Only the Player table blocks the visible screen. The other resources keep
+  // loading in the background, so cached Players and their guardian details
+  // remain visible while Coach/Generation mapping is still resolving.
+  const screenLoading = isLoadingResources(["players"]);
+  const screenLoadError = hasResourceErrors(["players"]);
   const screenError = getResourceError([
     "players",
     "events",
@@ -93,13 +84,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [playerSaveError, setPlayerSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    void ensureFresh([
-      "players",
-      "events",
-      "performances",
-      "generations",
-      "generationsToCoaches",
-    ]);
+    // Players are the critical first stage: they identify the selected
+    // guardian. Starting every Performance read here used to put the Contact
+    // lookup at the back of the mobile-safe Dataverse queue.
+    void ensureFresh(["players"]);
   }, [ensureFresh]);
 
   const generationTabs = useMemo(() => {
@@ -129,7 +117,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           seen.add(id);
           result.push({ id, name });
         }
-      });
+    });
 
     const yearOf = (s: string) => { const m = s.match(/\d{4}/) || s.match(/\d+/); return m ? parseInt(m[0], 10) : Infinity; };
     return result.sort((a, b) => { const ya = yearOf(a.name), yb = yearOf(b.name); return ya !== yb ? ya - yb : a.name.localeCompare(b.name); });
@@ -176,6 +164,123 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const playerPos = lookupName(player, "cr9be_position");
   const playerNum = player ? (player.cr9be_number ?? "?") : "?";
   const initials = playerName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
+
+  // Guardian details come from the related Contact so they reflect current
+  // Contact values rather than a potentially stale lookup-name annotation.
+  const guardianId = (player as any)?._cr9be_member_value as string | undefined;
+  const guardianLookupName = lookupName(player, "cr9be_member") || null;
+  const [guardianContact, setGuardianContact] = useState<GuardianContactDetails | null>(null);
+  const [guardianLoading, setGuardianLoading] = useState(false);
+  const [guardianError, setGuardianError] = useState<string | null>(null);
+  const guardianRequestVersionRef = React.useRef(0);
+
+  const loadGuardian = useCallback(
+    async (
+      id: string,
+      force = false,
+      fallbackName: string | null = null
+    ): Promise<void> => {
+      const requestVersion = ++guardianRequestVersionRef.current;
+      const cached = getCachedGuardianContact(id);
+
+      if (cached) {
+        // Stale-while-revalidate: never replace usable guardian details with
+        // a loading state. A stale value stays visible while Dataverse refreshes.
+        setGuardianContact(cached.details);
+        setGuardianError(null);
+        setGuardianLoading(false);
+
+        if (cached.isFresh && !force) return;
+      } else if (fallbackName) {
+        // On the first-ever load there is no Contact cache yet, but the Player
+        // row normally carries the lookup's formatted name. Show that at once
+        // and fill in the phone number when the Contact request succeeds.
+        setGuardianContact({ name: fallbackName, phone: null });
+        setGuardianError(null);
+        setGuardianLoading(false);
+      } else {
+        setGuardianContact(null);
+        setGuardianError(null);
+        setGuardianLoading(true);
+      }
+
+      try {
+        const details = await getGuardianContact(id, {
+          force: force || Boolean(cached),
+        });
+        if (guardianRequestVersionRef.current !== requestVersion) return;
+        setGuardianContact(details);
+      } catch (err) {
+        if (guardianRequestVersionRef.current !== requestVersion) return;
+        // A background refresh failure must not hide saved guardian details.
+        // Only a first load with no cache needs an actionable error.
+        if (!cached && !fallbackName) {
+          setGuardianContact(null);
+          setGuardianError(
+            err instanceof Error ? err.message : "Failed to load guardian details"
+          );
+        }
+      } finally {
+        if (guardianRequestVersionRef.current === requestVersion) {
+          setGuardianLoading(false);
+        }
+      }
+    },
+    [getCachedGuardianContact, getGuardianContact]
+  );
+
+  useEffect(() => {
+    if (!guardianId) {
+      guardianRequestVersionRef.current += 1;
+      setGuardianContact(null);
+      setGuardianError(null);
+      setGuardianLoading(false);
+      return;
+    }
+
+    if (!guardianCacheReady) {
+      // Account context normally resolves quickly. Until then, show the
+      // formatted Player lookup name without waiting for Coach resolution.
+      guardianRequestVersionRef.current += 1;
+      setGuardianContact(
+        guardianLookupName ? { name: guardianLookupName, phone: null } : null
+      );
+      setGuardianError(null);
+      setGuardianLoading(false);
+      return;
+    }
+
+    void loadGuardian(guardianId, false, guardianLookupName);
+
+    // The Dataverse call cannot be cancelled, but invalidating this request
+    // prevents an older player's response from updating the current player.
+    return () => {
+      guardianRequestVersionRef.current += 1;
+    };
+  }, [guardianCacheReady, guardianId, guardianLookupName, loadGuardian]);
+
+  useEffect(() => {
+    if (players.length === 0) return;
+    // If the selected Player has a guardian, let account context resolve first
+    // so the guardian cache/read enters the serialized Dataverse queue before
+    // the lower-priority Performance resources. This does not wait for Coach
+    // or Generation-to-Coach resolution.
+    if (guardianId && !guardianCacheReady) return;
+
+    // Give the selected guardian effect above one render turn to enter the
+    // serialized queue first. The remaining screen data then follows without
+    // creating concurrent Dataverse bridge calls.
+    const timer = window.setTimeout(() => {
+      void ensureFresh([
+        "events",
+        "performances",
+        "generations",
+        "generationsToCoaches",
+      ]);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [ensureFresh, guardianCacheReady, guardianId, players.length]);
 
   // Memoized on [performances, selectedId] so the array reference is stable across
   // re-renders — otherwise the Edit Mode prefill effect below (which depends on
@@ -517,6 +622,79 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     )}
                   </div>
                 </div>
+
+                {guardianId && (
+                  <div style={{ marginTop: 12, position: "relative" }}>
+                    {guardianLoading && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.mute, fontFamily: fontStack }}>
+                        <RefreshCw size={11} style={{ animation: "spin 1s linear infinite" }} />
+                        Loading guardian…
+                      </div>
+                    )}
+
+                    {!guardianLoading && guardianError && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontFamily: fontStack }}>
+                        <span style={{ color: COLORS.red, fontWeight: 600 }}>Guardian unavailable</span>
+                        <button
+                          onClick={() => void loadGuardian(guardianId, true, guardianLookupName)}
+                          style={{ background: "none", border: 0, padding: 0, color: COLORS.navy, fontWeight: 700, fontSize: 12.5, textDecoration: "underline", cursor: "pointer" }}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+
+                    {!guardianLoading && !guardianError && guardianContact && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          background: COLORS.cream,
+                          border: `1px solid ${COLORS.line}`,
+                          borderRadius: 14,
+                          padding: "9px 12px",
+                        }}
+                      >
+                        <User size={14} color={COLORS.navy} strokeWidth={2} style={{ flexShrink: 0 }} />
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontFamily: fontStack,
+                            fontWeight: 700,
+                            fontSize: 13,
+                            color: COLORS.navy,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {guardianContact.name || "Unnamed guardian"}
+                        </span>
+                        {guardianContact.phone && (
+                          <a
+                            href={`tel:${guardianContact.phone}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontFamily: monoStack,
+                              fontWeight: 700,
+                              fontSize: 12.5,
+                              color: COLORS.navy,
+                              textDecoration: "none",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Phone size={12} color={COLORS.navy} strokeWidth={2} />
+                            {guardianContact.phone}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div style={{ marginTop: 14, position: "relative" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
