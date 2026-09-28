@@ -31,7 +31,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, guardianCacheReady, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   // Only the Player table blocks the visible screen. The other resources keep
   // loading in the background, so cached Players and their guardian details
   // remain visible while Coach/Generation mapping is still resolving.
@@ -171,8 +171,33 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const guardianLookupName = lookupName(player, "cr9be_member") || null;
   const [guardianContact, setGuardianContact] = useState<GuardianContactDetails | null>(null);
   const [guardianLoading, setGuardianLoading] = useState(false);
+  const [guardianPhoneLoading, setGuardianPhoneLoading] = useState(false);
   const [guardianError, setGuardianError] = useState<string | null>(null);
+  const [guardianRetryToken, setGuardianRetryToken] = useState(0);
   const guardianRequestVersionRef = React.useRef(0);
+  const guardianRetryTimerRef = React.useRef<number | null>(null);
+  const guardianRetryAttemptRef = React.useRef(0);
+
+  const clearGuardianRetry = useCallback(() => {
+    if (guardianRetryTimerRef.current !== null) {
+      window.clearTimeout(guardianRetryTimerRef.current);
+      guardianRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleGuardianRetry = useCallback(() => {
+    if (guardianRetryTimerRef.current !== null) return;
+
+    const delays = [5_000, 15_000, 45_000] as const;
+    const delay = delays[guardianRetryAttemptRef.current];
+    if (delay === undefined) return;
+
+    guardianRetryAttemptRef.current += 1;
+    guardianRetryTimerRef.current = window.setTimeout(() => {
+      guardianRetryTimerRef.current = null;
+      setGuardianRetryToken((current) => current + 1);
+    }, delay);
+  }, []);
 
   const loadGuardian = useCallback(
     async (
@@ -189,8 +214,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         setGuardianContact(cached.details);
         setGuardianError(null);
         setGuardianLoading(false);
+        setGuardianPhoneLoading(!cached.details.phone);
 
-        if (cached.isFresh && !force) return;
+        // A fresh name-only entry is incomplete. Revalidate it now instead
+        // of waiting for the normal 30-minute guardian freshness interval.
+        if (cached.isFresh && cached.details.phone && !force) return;
       } else if (fallbackName) {
         // On the first-ever load there is no Contact cache yet, but the Player
         // row normally carries the lookup's formatted name. Show that at once
@@ -198,18 +226,24 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         setGuardianContact({ name: fallbackName, phone: null });
         setGuardianError(null);
         setGuardianLoading(false);
+        setGuardianPhoneLoading(true);
       } else {
         setGuardianContact(null);
         setGuardianError(null);
         setGuardianLoading(true);
+        setGuardianPhoneLoading(false);
       }
 
       try {
         const details = await getGuardianContact(id, {
-          force: force || Boolean(cached),
+          force,
         });
         if (guardianRequestVersionRef.current !== requestVersion) return;
         setGuardianContact(details);
+        setGuardianError(null);
+        setGuardianPhoneLoading(false);
+        guardianRetryAttemptRef.current = 0;
+        clearGuardianRetry();
       } catch (err) {
         if (guardianRequestVersionRef.current !== requestVersion) return;
         // A background refresh failure must not hide saved guardian details.
@@ -219,15 +253,28 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           setGuardianError(
             err instanceof Error ? err.message : "Failed to load guardian details"
           );
+        } else {
+          // Keep the usable name/card on screen. The shared read already did
+          // its short mobile retries; schedule slower follow-up attempts
+          // without turning this into a blocking screen error.
+          scheduleGuardianRetry();
         }
+        setGuardianPhoneLoading(false);
       } finally {
         if (guardianRequestVersionRef.current === requestVersion) {
           setGuardianLoading(false);
         }
       }
     },
-    [getCachedGuardianContact, getGuardianContact]
+    [clearGuardianRetry, getCachedGuardianContact, getGuardianContact, scheduleGuardianRetry]
   );
+
+  useEffect(() => {
+    guardianRetryAttemptRef.current = 0;
+    clearGuardianRetry();
+
+    return clearGuardianRetry;
+  }, [guardianId, clearGuardianRetry]);
 
   useEffect(() => {
     if (!guardianId) {
@@ -235,41 +282,32 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       setGuardianContact(null);
       setGuardianError(null);
       setGuardianLoading(false);
+      setGuardianPhoneLoading(false);
       return;
     }
 
-    if (!guardianCacheReady) {
-      // Account context normally resolves quickly. Until then, show the
-      // formatted Player lookup name without waiting for Coach resolution.
-      guardianRequestVersionRef.current += 1;
-      setGuardianContact(
-        guardianLookupName ? { name: guardianLookupName, phone: null } : null
-      );
-      setGuardianError(null);
-      setGuardianLoading(false);
-      return;
-    }
-
-    void loadGuardian(guardianId, false, guardianLookupName);
+    // Contact retrieval is independent of Coach/account-cache readiness.
+    // DataContext uses a scoped cache when available and otherwise performs
+    // the same live Contact read without blocking this card.
+    void loadGuardian(
+      guardianId,
+      guardianRetryAttemptRef.current > 0,
+      guardianLookupName
+    );
 
     // The Dataverse call cannot be cancelled, but invalidating this request
     // prevents an older player's response from updating the current player.
     return () => {
       guardianRequestVersionRef.current += 1;
     };
-  }, [guardianCacheReady, guardianId, guardianLookupName, loadGuardian]);
+  }, [guardianId, guardianLookupName, guardianRetryToken, loadGuardian]);
 
   useEffect(() => {
     if (players.length === 0) return;
-    // If the selected Player has a guardian, let account context resolve first
-    // so the guardian cache/read enters the serialized Dataverse queue before
-    // the lower-priority Performance resources. This does not wait for Coach
-    // or Generation-to-Coach resolution.
-    if (guardianId && !guardianCacheReady) return;
-
     // Give the selected guardian effect above one render turn to enter the
-    // serialized queue first. The remaining screen data then follows without
-    // creating concurrent Dataverse bridge calls.
+    // serialized queue first. It no longer waits for account/cache scope.
+    // The remaining screen data then follows without creating concurrent
+    // Dataverse bridge calls.
     const timer = window.setTimeout(() => {
       void ensureFresh([
         "events",
@@ -280,7 +318,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [ensureFresh, guardianCacheReady, guardianId, players.length]);
+  }, [ensureFresh, guardianId, players.length]);
 
   // Memoized on [performances, selectedId] so the array reference is stable across
   // re-renders — otherwise the Edit Mode prefill effect below (which depends on
@@ -672,6 +710,22 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                         >
                           {guardianContact.name || "Unnamed guardian"}
                         </span>
+                        {guardianPhoneLoading && !guardianContact.phone && (
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontFamily: monoStack,
+                              fontSize: 10.5,
+                              color: COLORS.mute,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <RefreshCw size={10} style={{ animation: "spin 1s linear infinite" }} />
+                            Loading phone…
+                          </span>
+                        )}
                         {guardianContact.phone && (
                           <a
                             href={`tel:${guardianContact.phone}`}

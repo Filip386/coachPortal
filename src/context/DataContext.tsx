@@ -166,7 +166,8 @@ interface DataContextValue {
     contactId: string
   ) => GuardianContactCacheSnapshot | null;
   /** Returns a guardian Contact through the shared Dataverse queue. Fresh
-   *  cached values avoid a read; force=true revalidates a stale saved value. */
+   *  cached values avoid a read; force=true revalidates a saved value. The
+   *  Contact read itself does not wait for account/cache scope to be ready. */
   getGuardianContact: (
     contactId: string,
     options?: GuardianContactOptions
@@ -757,6 +758,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const guardianContactInFlightRef = useRef<
     Map<string, Promise<GuardianContactDetails>>
   >(new Map());
+  // A Contact can legitimately have no phone. Revalidate a cached null once
+  // per app session, but do not hammer Dataverse every time that Player is
+  // selected when the live Contact still has no supported phone value.
+  const guardianMissingPhoneCheckedRef = useRef<Set<string>>(new Set());
 
 
   const enqueueDataverse = useCallback(
@@ -883,18 +888,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       const cacheKey = getGuardianCacheKey(normalizedId);
-      if (!cacheKey) {
-        return Promise.reject(
-          new Error("Your signed-in account is still loading. Please try again shortly.")
-        );
-      }
-
-      const cached = readGuardianContactCache(normalizedId);
+      const cached = cacheKey ? readGuardianContactCache(normalizedId) : null;
       if (!options.force && cached?.isFresh) {
-        return Promise.resolve(cached.details);
+        const hasPhone = Boolean(cached.details.phone?.trim());
+        const missingPhoneAlreadyChecked = cacheKey
+          ? guardianMissingPhoneCheckedRef.current.has(cacheKey)
+          : false;
+
+        if (hasPhone || missingPhoneAlreadyChecked) {
+          return Promise.resolve(cached.details);
+        }
       }
 
-      const existing = guardianContactInFlightRef.current.get(cacheKey);
+      // Account context is needed only to scope persistent storage. It must
+      // never gate the live Contact read: Power Apps Mobile can resolve the
+      // Player before getContext has supplied organization/account identity.
+      // Deduplicate by Contact for this provider session. This also prevents
+      // guardianCacheReady changing mid-request from enqueueing a second read
+      // for the same selected guardian under a newly available cache key.
+      const requestKey = `contact:${normalizedId}`;
+      const existing = guardianContactInFlightRef.current.get(requestKey);
       if (existing) return existing;
 
       const request = runDataverseRead(
@@ -913,21 +926,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             );
           }
 
-          const details: GuardianContactDetails = {
-            name: res.data.fullname || null,
-            phone: res.data.mobilephone || res.data.telephone1 || null,
-          };
-          // Use the scope captured when this request began. If account/coach
-          // identity changes before it finishes, the response cannot leak
-          // into the new coach's cache.
-          writeGuardianContactCache(cacheKey, details);
+          const name = res.data.fullname?.trim() || null;
+          const phone =
+            res.data.mobilephone?.trim() ||
+            res.data.telephone1?.trim() ||
+            null;
+          const details: GuardianContactDetails = { name, phone };
+
+          // Prefer the scope captured when the request began. If this was an
+          // early unscoped mobile read, getContext may have become ready while
+          // it was in flight; in that case it is now safe to persist the result.
+          const resolvedCacheKey = cacheKey ?? getGuardianCacheKey(normalizedId);
+          if (resolvedCacheKey) {
+            writeGuardianContactCache(resolvedCacheKey, details);
+            if (phone) {
+              guardianMissingPhoneCheckedRef.current.delete(resolvedCacheKey);
+            } else {
+              guardianMissingPhoneCheckedRef.current.add(resolvedCacheKey);
+            }
+          }
           return details;
         }
       ).finally(() => {
-        guardianContactInFlightRef.current.delete(cacheKey);
+        guardianContactInFlightRef.current.delete(requestKey);
       });
 
-      guardianContactInFlightRef.current.set(cacheKey, request);
+      guardianContactInFlightRef.current.set(requestKey, request);
       return request;
     },
     [getGuardianCacheKey, readGuardianContactCache, runDataverseRead, writeGuardianContactCache]
@@ -1544,6 +1568,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           clearTableCaches();
           guardianContactCacheRef.current.clear();
           guardianContactInFlightRef.current.clear();
+          guardianMissingPhoneCheckedRef.current.clear();
 
           (
             [
