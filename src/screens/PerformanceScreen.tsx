@@ -39,7 +39,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, guardianCacheReady, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   // Only the Player table blocks the visible screen. The other resources keep
   // loading in the background, so cached Players and their guardian details
   // remain visible while Coach/Generation mapping is still resolving.
@@ -95,8 +95,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     // Players are the critical first stage: they identify the selected
     // guardian. Starting every Performance read here used to put the Contact
     // lookup at the back of the mobile-safe Dataverse queue.
-    void ensureFresh(["players"]);
-  }, [ensureFresh]);
+    if (players.length === 0) void ensureFresh(["players"]);
+  }, [ensureFresh, players.length]);
 
   const generationTabs = useMemo(() => {
     const sortGenerations = (items: { id: string; name: string }[]) => {
@@ -343,7 +343,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         setGuardianPhoneLoading(!cached.details.phone);
 
         // A fresh name-only entry is incomplete. Revalidate it now instead
-        // of waiting for the normal 30-minute guardian freshness interval.
+        // of waiting for the normal 24-hour guardian freshness interval.
         if (cached.isFresh && cached.details.phone && !force) return;
       } else if (fallbackName) {
         // On the first-ever load there is no Contact cache yet, but the Player
@@ -426,7 +426,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     return () => {
       guardianRequestVersionRef.current += 1;
     };
-  }, [guardianId, guardianLookupName, guardianCacheReady, guardianRetryToken, loadGuardian]);
+  }, [guardianId, guardianLookupName, guardianRetryToken, loadGuardian]);
 
   useEffect(() => {
     if (players.length === 0) return;
@@ -438,6 +438,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       // These reads remain non-blocking for the visible cached Player card,
       // but Performance now refreshes its own Generation mappings again.
       void ensureFresh([
+        "players",
         "events",
         "performances",
         "generations",
@@ -878,6 +879,18 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                             <Phone size={12} color={COLORS.navy} strokeWidth={2} />
                             {guardianContact.phone}
                           </a>
+                        )}
+                        {!guardianPhoneLoading && !guardianContact.phone && (
+                          <span
+                            style={{
+                              fontFamily: monoStack,
+                              fontSize: 10.5,
+                              color: COLORS.mute,
+                              flexShrink: 0,
+                            }}
+                          >
+                            No phone stored
+                          </span>
                         )}
                       </div>
                     )}

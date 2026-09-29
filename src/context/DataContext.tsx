@@ -94,8 +94,9 @@ interface GuardianContactOptions {
 interface DataContextValue {
   coachName: string | null;
   coachId: string | null;
-  /** True once environment + signed-in account are known, allowing guardian
-   *  cache access without waiting for Contact → Coach resolution. */
+  /** True once environment + signed-in account are known, allowing scoped
+   *  guardian cache validation/writes. The regular guardian cache is readable
+   *  immediately, without waiting for Contact → Coach resolution. */
   guardianCacheReady: boolean;
 
   /** True until a usable Coach identity is available. A saved identity can
@@ -203,6 +204,7 @@ const CACHE = {
   players: "cvf_players",
   events: "cvf_events",
   attendances: "cvf_attendances",
+  guardians: "cvf_guardian_contacts",
   invoices: "cvf_invoices",
   facilities: "cvf_facilities",
   performances: "cvf_performances",
@@ -218,6 +220,7 @@ const COACH_ATTENDANCE_CACHE_PREFIX = "cvf_coach_attendances_v1";
 const COACH_ATTENDANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const COACH_IDENTITY_CACHE_PREFIX = "cvf_coach_identity_v1";
 const COACH_IDENTITY_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const COACH_BOOTSTRAP_CACHE_KEY = "cvf_last_verified_coach_v1";
 
 
 interface TaskCacheEnvelope {
@@ -235,6 +238,15 @@ interface CoachAttendanceCacheEnvelope {
 interface CoachIdentityCacheEnvelope {
   cachedAt: number;
   coachId: string;
+}
+
+
+interface CoachBootstrapCacheEnvelope {
+  cachedAt: number;
+  orgUrl: string;
+  userKey: string;
+  coachId: string;
+  coachName: string | null;
 }
 
 
@@ -474,6 +486,119 @@ function removeCoachIdentityCache(
 }
 
 
+function readCoachBootstrapCache(): CoachBootstrapCacheEnvelope | null {
+  try {
+    const raw = localStorage.getItem(COACH_BOOTSTRAP_CACHE_KEY);
+    if (!raw) {
+      // One-time migration for installations that already have the former
+      // account-scoped Coach identity cache. If this device has exactly one
+      // valid identity, it is safe to use as the initial bootstrap hint and
+      // validate it against getContext immediately afterward.
+      const prefix = `${COACH_IDENTITY_CACHE_PREFIX}:`;
+      const candidates: CoachBootstrapCacheEnvelope[] = [];
+
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key?.startsWith(prefix)) continue;
+
+        const parts = key.slice(prefix.length).split(":");
+        if (parts.length !== 2) continue;
+
+        const stored = localStorage.getItem(key);
+        if (!stored) continue;
+
+        const identity = JSON.parse(stored) as CoachIdentityCacheEnvelope;
+        const coachId = normalizeGuid(identity?.coachId);
+        const orgUrl = decodeURIComponent(parts[0]).trim();
+        const userKey = decodeURIComponent(parts[1]).trim().toLowerCase();
+        if (
+          coachId &&
+          orgUrl &&
+          userKey &&
+          typeof identity?.cachedAt === "number" &&
+          Date.now() - identity.cachedAt <= COACH_IDENTITY_CACHE_RETENTION_MS
+        ) {
+          candidates.push({
+            cachedAt: identity.cachedAt,
+            orgUrl,
+            userKey,
+            coachId,
+            coachName: null,
+          });
+        }
+      }
+
+      if (candidates.length !== 1) return null;
+      localStorage.setItem(
+        COACH_BOOTSTRAP_CACHE_KEY,
+        JSON.stringify(candidates[0])
+      );
+      return candidates[0];
+    }
+
+    const parsed = JSON.parse(raw) as CoachBootstrapCacheEnvelope;
+    const coachId = normalizeGuid(parsed?.coachId);
+    const orgUrl = parsed?.orgUrl?.trim();
+    const userKey = parsed?.userKey?.trim().toLowerCase();
+    if (
+      !coachId ||
+      !orgUrl ||
+      !userKey ||
+      typeof parsed?.cachedAt !== "number" ||
+      Date.now() - parsed.cachedAt > COACH_IDENTITY_CACHE_RETENTION_MS
+    ) {
+      localStorage.removeItem(COACH_BOOTSTRAP_CACHE_KEY);
+      return null;
+    }
+
+    return {
+      cachedAt: parsed.cachedAt,
+      orgUrl,
+      userKey,
+      coachId,
+      coachName:
+        typeof parsed.coachName === "string" && parsed.coachName.trim()
+          ? parsed.coachName.trim()
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+function writeCoachBootstrapCache(
+  orgUrl: string | null,
+  userKey: string,
+  coachId: string,
+  coachName: string | null
+): CoachBootstrapCacheEnvelope | null {
+  const normalizedCoachId = normalizeGuid(coachId);
+  const normalizedUserKey = userKey.trim().toLowerCase();
+  if (!orgUrl || !normalizedUserKey || !normalizedCoachId) return null;
+
+  const value: CoachBootstrapCacheEnvelope = {
+    cachedAt: Date.now(),
+    orgUrl,
+    userKey: normalizedUserKey,
+    coachId: normalizedCoachId,
+    coachName: coachName?.trim() || null,
+  };
+
+  try {
+    localStorage.setItem(COACH_BOOTSTRAP_CACHE_KEY, JSON.stringify(value));
+  } catch {}
+  return value;
+}
+
+
+function removeCoachBootstrapCache(): void {
+  try {
+    localStorage.removeItem(COACH_BOOTSTRAP_CACHE_KEY);
+  } catch {}
+}
+
+
 function hasUsableCache(key: string): boolean {
   try {
     const raw = localStorage.getItem(key);
@@ -484,14 +609,14 @@ function hasUsableCache(key: string): boolean {
 }
 
 
-function createInitialResourceStatus(): Record<DataResource, DataResourceStatus> {
+function createInitialResourceStatus(
+  hasCoachAttendanceCache = false
+): Record<DataResource, DataResourceStatus> {
   return {
     players: hasUsableCache(CACHE.players) ? "ready" : "idle",
     events: hasUsableCache(CACHE.events) ? "ready" : "idle",
     attendances: hasUsableCache(CACHE.attendances) ? "ready" : "idle",
-    // Coach attendance is scoped by organization + Coach, so its cache can
-    // only be selected after identity resolution.
-    coachAttendances: "idle",
+    coachAttendances: hasCoachAttendanceCache ? "ready" : "idle",
     invoices: hasUsableCache(CACHE.invoices) ? "ready" : "idle",
     facilities: hasUsableCache(CACHE.facilities) ? "ready" : "idle",
     performances: hasUsableCache(CACHE.performances) ? "ready" : "idle",
@@ -551,13 +676,96 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
 const BACKGROUND_RETRY_DELAYS_MS = [15_000, 45_000, 120_000] as const;
 const GUARDIAN_CACHE_PREFIX = "cvf_guardian_v2";
-const GUARDIAN_CACHE_FRESH_MS = 30 * 60_000;
-const GUARDIAN_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const GUARDIAN_CACHE_FRESH_MS = 24 * 60 * 60_000;
+const GUARDIAN_CACHE_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 
 interface GuardianContactCacheEnvelope {
   cachedAt: number;
   details: GuardianContactDetails;
+}
+
+
+interface GuardianTableCacheEntry extends GuardianContactCacheEnvelope {
+  contactId: string;
+}
+
+
+function readGuardianTableCache(): Map<string, GuardianContactCacheEnvelope> {
+  const entries = readCache<GuardianTableCacheEntry>(CACHE.guardians);
+  const result = new Map<string, GuardianContactCacheEnvelope>();
+
+  entries.forEach((entry) => {
+    const contactId = normalizeGuid(entry?.contactId);
+    if (
+      contactId &&
+      isGuardianCacheEnvelope(entry) &&
+      Date.now() - entry.cachedAt <= GUARDIAN_CACHE_RETENTION_MS
+    ) {
+      result.set(contactId, {
+        cachedAt: entry.cachedAt,
+        details: entry.details,
+      });
+    }
+  });
+
+  if (result.size === 0) {
+    // Migrate guardian details already cached by the previous scoped format.
+    // This prevents the package upgrade itself from causing one more mobile
+    // "Loading phone" cycle before the new regular table cache is populated.
+    try {
+      const prefix = `${GUARDIAN_CACHE_PREFIX}:`;
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key?.startsWith(prefix)) continue;
+
+        const contactId = normalizeGuid(key.split(":").pop());
+        const raw = localStorage.getItem(key);
+        if (!contactId || !raw) continue;
+
+        const value = JSON.parse(raw) as unknown;
+        if (
+          !isGuardianCacheEnvelope(value) ||
+          Date.now() - value.cachedAt > GUARDIAN_CACHE_RETENTION_MS
+        ) {
+          continue;
+        }
+
+        const existing = result.get(contactId);
+        if (!existing || value.cachedAt > existing.cachedAt) {
+          result.set(contactId, value);
+        }
+      }
+
+      if (result.size > 0) {
+        writeCache(
+          CACHE.guardians,
+          Array.from(result, ([contactId, value]) => ({
+            contactId,
+            cachedAt: value.cachedAt,
+            details: value.details,
+          }))
+        );
+      }
+    } catch {}
+  }
+
+  return result;
+}
+
+
+function writeGuardianTableCache(
+  cache: Map<string, GuardianContactCacheEnvelope>
+): void {
+  const entries: GuardianTableCacheEntry[] = Array.from(
+    cache,
+    ([contactId, value]) => ({
+      contactId,
+      cachedAt: value.cachedAt,
+      details: value.details,
+    })
+  );
+  writeCache(CACHE.guardians, entries);
 }
 
 
@@ -663,17 +871,37 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
 
-  const [coachName, setCoachName] = useState<string | null>(null);
+  // A verified last-session identity is a startup hint only. It lets the
+  // Coach-scoped attendance cache render during the first React pass; the
+  // current Power Apps account is still validated immediately in background.
+  const initialCoachBootstrapRef = useRef<CoachBootstrapCacheEnvelope | null>(
+    readCoachBootstrapCache()
+  );
+  const initialCoachAttendanceCacheRef =
+    useRef<CoachAttendanceCacheEnvelope | null>(
+      initialCoachBootstrapRef.current
+        ? readCoachAttendanceCache(
+            initialCoachBootstrapRef.current.orgUrl,
+            initialCoachBootstrapRef.current.coachId
+          )
+        : null
+    );
+
+  const [coachName, setCoachName] = useState<string | null>(
+    initialCoachBootstrapRef.current?.coachName ?? null
+  );
 
   const [loggedInCoachId, setLoggedInCoachId] =
-    useState<string | null>(null);
+    useState<string | null>(initialCoachBootstrapRef.current?.coachId ?? null);
 
   const [coachId, setCoachId] =
-    useState<string | null>(null);
+    useState<string | null>(initialCoachBootstrapRef.current?.coachId ?? null);
 
   const [guardianCacheReady, setGuardianCacheReady] = useState(false);
 
-  const [coachLookupLoading, setCoachLookupLoading] = useState(true);
+  const [coachLookupLoading, setCoachLookupLoading] = useState(
+    !initialCoachBootstrapRef.current
+  );
 
   const [coachLookupError, setCoachLookupError] = useState<string | null>(null);
 
@@ -695,10 +923,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       readCache(CACHE.attendances)
     );
 
-  // Restored only after Coach identity resolves because this cache is scoped
-  // by Dataverse organization + Coach id.
   const [coachAttendances, setCoachAttendances] =
-    useState<Axm365_eventcoachattendances[]>([]);
+    useState<Axm365_eventcoachattendances[]>(
+      initialCoachAttendanceCacheRef.current?.attendances ?? []
+    );
 
   const [invoices, setInvoices] = useState<Invoices[]>(() =>
     readCache(CACHE.invoices)
@@ -738,14 +966,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // "no data" state.
   const [resourceStatus, setResourceStatus] = useState<
     Record<DataResource, DataResourceStatus>
-  >(createInitialResourceStatus);
+  >(() =>
+    createInitialResourceStatus(Boolean(initialCoachAttendanceCacheRef.current))
+  );
   const resourceStatusRef = useRef(resourceStatus);
   resourceStatusRef.current = resourceStatus;
   const resourceHasUsableDataRef = useRef<Record<DataResource, boolean>>({
     players: resourceStatus.players === "ready",
     events: resourceStatus.events === "ready",
     attendances: resourceStatus.attendances === "ready",
-    coachAttendances: false,
+    coachAttendances: resourceStatus.coachAttendances === "ready",
     invoices: resourceStatus.invoices === "ready",
     facilities: resourceStatus.facilities === "ready",
     performances: resourceStatus.performances === "ready",
@@ -854,7 +1084,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const wasHiddenRef = useRef(false);
   const dataverseOrgUrlRef = useRef<string | null>(null);
   const guardianCacheUserKeyRef = useRef<string | null>(null);
-  const activeCoachIdRef = useRef<string | null>(null);
+  const activeCoachIdRef = useRef<string | null>(
+    initialCoachBootstrapRef.current?.coachId ?? null
+  );
   const taskInFlightByCoachRef = useRef<Record<string, Promise<void>>>({});
   const coachAttendanceInFlightByCoachRef = useRef<
     Record<string, Promise<void>>
@@ -867,6 +1099,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const guardianContactCacheRef = useRef<
     Map<string, GuardianContactCacheEnvelope>
   >(new Map());
+  const guardianTableCacheRef = useRef<
+    Map<string, GuardianContactCacheEnvelope>
+  >(readGuardianTableCache());
   const guardianContactInFlightRef = useRef<
     Map<string, Promise<GuardianContactDetails>>
   >(new Map());
@@ -927,12 +1162,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const readGuardianContactCache = useCallback(
     (contactId: string): GuardianContactCacheSnapshot | null => {
-      const key = getGuardianCacheKey(contactId);
-      if (!key) return null;
+      const normalizedContactId = normalizeGuid(contactId);
+      if (!normalizedContactId) return null;
 
-      let cached = guardianContactCacheRef.current.get(key) ?? null;
+      const key = getGuardianCacheKey(normalizedContactId);
 
-      if (!cached) {
+      let cached = key
+        ? guardianContactCacheRef.current.get(key) ?? null
+        : null;
+
+      if (!cached && key) {
         try {
           const raw = localStorage.getItem(key);
           if (raw) {
@@ -947,14 +1186,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         } catch {}
       }
 
+      // Guardian Contact details are Player-related reference data, not
+      // Coach-specific data. This regular table cache is therefore available
+      // during the first render, before account/Coach scope is resolved.
+      if (!cached) {
+        cached =
+          guardianTableCacheRef.current.get(normalizedContactId) ?? null;
+      }
+
       if (!cached) return null;
 
       const ageMs = Date.now() - cached.cachedAt;
       if (ageMs > GUARDIAN_CACHE_RETENTION_MS) {
-        guardianContactCacheRef.current.delete(key);
-        try {
-          localStorage.removeItem(key);
-        } catch {}
+        if (key) {
+          guardianContactCacheRef.current.delete(key);
+          try {
+            localStorage.removeItem(key);
+          } catch {}
+        }
+        guardianTableCacheRef.current.delete(normalizedContactId);
+        writeGuardianTableCache(guardianTableCacheRef.current);
         return null;
       }
 
@@ -968,15 +1219,27 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   const writeGuardianContactCache = useCallback(
-    (key: string, details: GuardianContactDetails): void => {
+    (
+      key: string | null,
+      contactId: string,
+      details: GuardianContactDetails
+    ): void => {
+      const normalizedContactId = normalizeGuid(contactId);
+      if (!normalizedContactId) return;
+
       const value: GuardianContactCacheEnvelope = {
         cachedAt: Date.now(),
         details,
       };
-      guardianContactCacheRef.current.set(key, value);
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-      } catch {}
+      if (key) {
+        guardianContactCacheRef.current.set(key, value);
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
+      }
+
+      guardianTableCacheRef.current.set(normalizedContactId, value);
+      writeGuardianTableCache(guardianTableCacheRef.current);
     },
     []
   );
@@ -1000,7 +1263,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       const cacheKey = getGuardianCacheKey(normalizedId);
-      const cached = cacheKey ? readGuardianContactCache(normalizedId) : null;
+      const cached = readGuardianContactCache(normalizedId);
       if (!options.force && cached?.isFresh) {
         const hasPhone = Boolean(cached.details.phone?.trim());
         const missingPhoneAlreadyChecked = cacheKey
@@ -1049,8 +1312,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // early unscoped mobile read, getContext may have become ready while
           // it was in flight; in that case it is now safe to persist the result.
           const resolvedCacheKey = cacheKey ?? getGuardianCacheKey(normalizedId);
+          writeGuardianContactCache(resolvedCacheKey, normalizedId, details);
           if (resolvedCacheKey) {
-            writeGuardianContactCache(resolvedCacheKey, details);
             if (phone) {
               guardianMissingPhoneCheckedRef.current.delete(resolvedCacheKey);
             } else {
@@ -1132,10 +1395,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
                 contact.mobilephone?.trim() ||
                 contact.telephone1?.trim() ||
                 null;
-              writeGuardianContactCache(cacheKey, {
-                name: contact.fullname?.trim() || null,
-                phone,
-              });
+              writeGuardianContactCache(
+                cacheKey,
+                contactId,
+                {
+                  name: contact.fullname?.trim() || null,
+                  phone,
+                }
+              );
 
               if (phone) {
                 guardianMissingPhoneCheckedRef.current.delete(cacheKey);
@@ -1323,8 +1590,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // REFRESH COACH ATTENDANCES
   //
   // This is intentionally separate from player event attendance. It is
-  // Coach-scoped, cached per environment + Coach, and restored only after
-  // the signed-in Coach is known.
+  // Coach-scoped and cached per environment + Coach. The last verified
+  // Coach's rows can be restored during the first render, then the current
+  // account and live rows are validated in the background.
   // ---------------------------------------------------------
 
   const refreshCoachAttendances = useCallback(async () => {
@@ -1377,13 +1645,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       });
 
+      const cachedAt = Date.now();
+      initialCoachAttendanceCacheRef.current = {
+        cachedAt,
+        attendances: merged,
+      };
       setCoachAttendances(merged);
       writeCoachAttendanceCache(
         dataverseOrgUrlRef.current,
         requestCoachId,
         merged
       );
-      lastFetchedRef.current.coachAttendances = Date.now();
+      lastFetchedRef.current.coachAttendances = cachedAt;
       resourceHasUsableDataRef.current.coachAttendances = true;
       backgroundRetryAttemptsRef.current.coachAttendances = 0;
       setResourceStatus((current) => ({
@@ -1471,6 +1744,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         normalizedCoachId,
         next
       );
+      initialCoachAttendanceCacheRef.current = {
+        cachedAt: Date.now(),
+        attendances: next,
+      };
       return next;
     });
 
@@ -1726,10 +2003,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       delete lastFetchedRef.current.coachAttendances;
       pendingCoachClockInsRef.current.clear();
 
-      const cached = readCoachAttendanceCache(
-        dataverseOrgUrlRef.current,
-        normalizedCoachId
-      );
+      const startupBootstrap = initialCoachBootstrapRef.current;
+      const startupMatchesCoach =
+        normalizeGuid(startupBootstrap?.coachId) === normalizedCoachId;
+      const cacheOrgUrl =
+        dataverseOrgUrlRef.current ??
+        (startupMatchesCoach ? startupBootstrap?.orgUrl ?? null : null);
+      const cached =
+        readCoachAttendanceCache(cacheOrgUrl, normalizedCoachId) ??
+        (startupMatchesCoach
+          ? initialCoachAttendanceCacheRef.current
+          : null);
       resourceHasUsableDataRef.current.coachAttendances = cached !== null;
       setCoachAttendances(cached?.attendances ?? []);
       setResourceErrors((current) => {
@@ -1745,6 +2029,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       void refreshCoachAttendances().catch(() => {});
     } else if (!coachLookupLoading) {
       activeCoachIdRef.current = null;
+      initialCoachAttendanceCacheRef.current = null;
       pendingCoachClockInsRef.current.clear();
       resourceHasUsableDataRef.current.coachAttendances = true;
       setCoachAttendances([]);
@@ -1999,6 +2284,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
           clearTableCaches();
           guardianContactCacheRef.current.clear();
+          guardianTableCacheRef.current.clear();
           guardianContactInFlightRef.current.clear();
           guardianMissingPhoneCheckedRef.current.clear();
 
@@ -2186,6 +2472,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     backgroundRetryAttemptsRef.current.tasks = 0;
     backgroundRetryAttemptsRef.current.coachAttendances = 0;
     activeCoachIdRef.current = null;
+    initialCoachAttendanceCacheRef.current = null;
     pendingCoachClockInsRef.current.clear();
     setCoachId(null);
     setLoggedInCoachId(null);
@@ -2242,6 +2529,27 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         guardianCacheUserKeyRef.current = userKey || null;
         setGuardianCacheReady(Boolean(orgUrl && userKey));
 
+        // The bootstrap cache is intentionally read before getContext so the
+        // first mobile render can use saved Coach attendance. As soon as the
+        // current account is known, validate that hint and remove it if this
+        // is a different environment or signed-in user.
+        const startupBootstrap = initialCoachBootstrapRef.current;
+        const bootstrapMatchesCurrentAccount = Boolean(
+          startupBootstrap &&
+            orgUrl &&
+            userKey &&
+            startupBootstrap.orgUrl.trim().toLowerCase() ===
+              orgUrl.trim().toLowerCase() &&
+            startupBootstrap.userKey === userKey.trim().toLowerCase()
+        );
+        if (startupBootstrap && !bootstrapMatchesCurrentAccount) {
+          initialCoachBootstrapRef.current = null;
+          initialCoachAttendanceCacheRef.current = null;
+          removeCoachBootstrapCache();
+          clearResolvedCoach();
+          setCoachLookupLoading(true);
+        }
+
 
         console.log(
           "[CoachPortal] Logged-in user:",
@@ -2268,6 +2576,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             "[CoachPortal] No email found for logged-in user."
           );
 
+          initialCoachBootstrapRef.current = null;
+          initialCoachAttendanceCacheRef.current = null;
+          removeCoachBootstrapCache();
+          clearResolvedCoach();
+
           setCoachLookupError(
             "Your signed-in account has no email address — a Coach record can't be matched."
           );
@@ -2289,6 +2602,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           const cachedIdentity = readCoachIdentityCache(orgUrl, userKey);
           if (cachedIdentity) {
             restoredCoachId = cachedIdentity.coachId;
+            initialCoachBootstrapRef.current = writeCoachBootstrapCache(
+              orgUrl,
+              userKey,
+              restoredCoachId,
+              fullName ?? initialCoachBootstrapRef.current?.coachName ?? null
+            );
             activeCoachIdRef.current = restoredCoachId;
             setCoachId(restoredCoachId);
             setLoggedInCoachId(restoredCoachId);
@@ -2337,6 +2656,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             );
 
             removeCoachIdentityCache(orgUrl, userKey);
+            removeCoachBootstrapCache();
+            initialCoachBootstrapRef.current = null;
+            initialCoachAttendanceCacheRef.current = null;
             clearResolvedCoach();
             setCoachLookupError(
               `No Dataverse contact found for ${email}.`
@@ -2392,6 +2714,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             );
 
             removeCoachIdentityCache(orgUrl, userKey);
+            removeCoachBootstrapCache();
+            initialCoachBootstrapRef.current = null;
+            initialCoachAttendanceCacheRef.current = null;
             clearResolvedCoach();
             setCoachLookupError(
               `No Coach record is linked to ${
@@ -2430,6 +2755,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           writeCoachIdentityCache(orgUrl, userKey, resolvedCoachId);
+          initialCoachBootstrapRef.current = writeCoachBootstrapCache(
+            orgUrl,
+            userKey,
+            resolvedCoachId,
+            fullName ?? contact.fullname ?? null
+          );
 
           activeCoachIdRef.current = resolvedCoachId;
 
