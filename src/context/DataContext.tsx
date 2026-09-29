@@ -260,6 +260,22 @@ function writeCache<T>(key: string, data: T[]) {
 }
 
 
+function sortPlayersByName(items: Cr9be_players[]): Cr9be_players[] {
+  return [...items].sort((left, right) => {
+    const nameComparison = (left.cr9be_name ?? "").localeCompare(
+      right.cr9be_name ?? "",
+      undefined,
+      { sensitivity: "base" }
+    );
+
+    // Keep ordering deterministic when two Players have the same name.
+    return nameComparison !== 0
+      ? nameComparison
+      : left.cr9be_playerid.localeCompare(right.cr9be_playerid);
+  });
+}
+
+
 function taskCacheKey(orgUrl: string, coachId: string): string {
   return `${TASK_CACHE_PREFIX}:${encodeURIComponent(
     orgUrl.trim().toLowerCase()
@@ -586,7 +602,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   const [players, setPlayers] = useState<Cr9be_players[]>(() =>
-    readCache(CACHE.players)
+    sortPlayersByName(readCache<Cr9be_players>(CACHE.players))
   );
 
   const [events, setEvents] = useState<Axm365_events[]>(() =>
@@ -1134,11 +1150,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshPlayers = useCallback(() =>
     runResourceRefresh("players", "Loading players", async () => {
-      const data = await fetchAllPages<Cr9be_players>((skipToken) =>
-        Cr9be_playersService.getAll({
-          filter: "statecode eq 0",
-          ...(skipToken ? { skipToken } : {}),
-        })
+      const data = sortPlayersByName(
+        await fetchAllPages<Cr9be_players>((skipToken) =>
+          Cr9be_playersService.getAll({
+            filter: "statecode eq 0",
+            orderBy: ["cr9be_name asc", "cr9be_playerid asc"],
+            ...(skipToken ? { skipToken } : {}),
+          })
+        )
       );
 
       setPlayers(data);
