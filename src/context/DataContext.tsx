@@ -353,10 +353,26 @@ function writeTaskCache(
   try {
     const value: TaskCacheEnvelope = {
       cachedAt: Date.now(),
-      tasks,
+      // Persist only the fields used by Home and Notifications. Generated
+      // Dataverse rows contain many properties that waste mobile cache space.
+      tasks: tasks.map((task) =>
+        ({
+          activityid: task.activityid,
+          subject: task.subject,
+          description: task.description,
+          prioritycode: task.prioritycode,
+          scheduledend: task.scheduledend,
+          createdon: task.createdon,
+          statecode: task.statecode,
+          statuscode: task.statuscode,
+          _regardingobjectid_value: task._regardingobjectid_value,
+        }) as Tasks
+      ),
     };
     localStorage.setItem(taskCacheKey(orgUrl, coachId), JSON.stringify(value));
-  } catch {}
+  } catch (cacheError) {
+    console.warn("[CoachPortal] Could not persist the Task cache:", cacheError);
+  }
 }
 
 
@@ -405,13 +421,31 @@ function writeCoachAttendanceCache(
   try {
     const value: CoachAttendanceCacheEnvelope = {
       cachedAt: Date.now(),
-      attendances,
+      // Attendance rendering and clock-in checks need only these identifiers
+      // and timestamps. Compact rows avoid exhausting Android localStorage.
+      attendances: attendances.map((attendance) =>
+        ({
+          axm365_eventcoachattendanceid:
+            attendance.axm365_eventcoachattendanceid,
+          axm365_name: attendance.axm365_name,
+          axm365_clockin: attendance.axm365_clockin,
+          createdon: attendance.createdon,
+          statecode: attendance.statecode,
+          _axm365_coach_value: attendance._axm365_coach_value,
+          _axm365_event_value: attendance._axm365_event_value,
+        }) as Axm365_eventcoachattendances
+      ),
     };
     localStorage.setItem(
       coachAttendanceCacheKey(orgUrl, coachId),
       JSON.stringify(value)
     );
-  } catch {}
+  } catch (cacheError) {
+    console.warn(
+      "[CoachPortal] Could not persist the Coach Attendance cache:",
+      cacheError
+    );
+  }
 }
 
 
@@ -646,6 +680,50 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 function normalizeGuid(value: string | null | undefined): string {
   return (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+}
+
+
+// Cache scoping must not depend only on dataverseOrgUrl. Power Apps Mobile can
+// supply the app/user context while that URL is unavailable or delayed. The
+// environment id is the stable first choice, with app id and org URL as safe
+// fallbacks for older hosts.
+function getContextCacheEnvironmentKey(context: unknown): string | null {
+  const app = (context as any)?.app;
+  const environmentId = normalizeGuid(app?.environmentId);
+  if (environmentId) return `environment:${environmentId}`;
+
+  const appId = normalizeGuid(app?.appId);
+  if (appId) return `app:${appId}`;
+
+  const orgUrl =
+    typeof app?.dataverseOrgUrl === "string"
+      ? app.dataverseOrgUrl.trim().toLowerCase()
+      : "";
+  return orgUrl ? `org:${orgUrl}` : null;
+}
+
+
+function storedEnvironmentMatchesContext(
+  storedEnvironment: string | null | undefined,
+  context: unknown
+): boolean {
+  const stored = storedEnvironment?.trim().toLowerCase();
+  if (!stored) return false;
+
+  const current = getContextCacheEnvironmentKey(context)?.toLowerCase();
+  if (current && stored === current) return true;
+
+  // Accept the raw URL used by v4 and earlier once, then rewrite it using the
+  // stable environment/app scope. This avoids an unnecessary cache purge when
+  // upgrading on a host that still supplies dataverseOrgUrl.
+  const legacyOrgUrl =
+    typeof (context as any)?.app?.dataverseOrgUrl === "string"
+      ? (context as any).app.dataverseOrgUrl.trim().toLowerCase()
+      : "";
+  return Boolean(
+    legacyOrgUrl &&
+      (stored === legacyOrgUrl || stored === `org:${legacyOrgUrl}`)
+  );
 }
 
 
@@ -1108,6 +1186,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // Prevent Player refreshes from enqueueing the same background Contact
   // batch more than once while an earlier warm-up is still in flight.
   const guardianWarmupPendingRef = useRef<Set<string>>(new Set());
+
+  // Tasks and Coach Attendance are isolated by Dataverse environment + Coach.
+  // During the first mobile render getContext may not have populated the live
+  // organization ref yet, so use the last verified bootstrap organization only
+  // when it belongs to the same Coach. This lets both scoped caches restore and
+  // persist before the live account validation finishes without crossing users.
+  const getCoachScopedCacheOrgUrl = useCallback(
+    (targetCoachId: string | null | undefined): string | null => {
+      const liveOrgUrl = dataverseOrgUrlRef.current;
+      if (liveOrgUrl) return liveOrgUrl;
+
+      const normalizedTargetCoachId = normalizeGuid(targetCoachId);
+      const bootstrap = initialCoachBootstrapRef.current;
+      return normalizedTargetCoachId &&
+        normalizeGuid(bootstrap?.coachId) === normalizedTargetCoachId
+        ? bootstrap?.orgUrl ?? null
+        : null;
+    },
+    []
+  );
 
 
   const enqueueDataverse = useCallback(
@@ -1594,6 +1692,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       const data = await fetchAllPages<Axm365_eventcoachattendances>(
         (skipToken) =>
           Axm365_eventcoachattendancesService.getAll({
+            select: [
+              "axm365_eventcoachattendanceid",
+              "axm365_name",
+              "axm365_clockin",
+              "createdon",
+              "statecode",
+              "_axm365_coach_value",
+              "_axm365_event_value",
+            ],
             filter: `statecode eq 0 and _axm365_coach_value eq ${requestCoachId}`,
             orderBy: ["createdon desc"],
             ...(skipToken ? { skipToken } : {}),
@@ -1625,7 +1732,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       };
       setCoachAttendances(merged);
       writeCoachAttendanceCache(
-        dataverseOrgUrlRef.current,
+        getCoachScopedCacheOrgUrl(requestCoachId),
         requestCoachId,
         merged
       );
@@ -1671,6 +1778,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     clearBackgroundRetry,
     coachId,
     enqueueDataverse,
+    getCoachScopedCacheOrgUrl,
     scheduleBackgroundRetry,
   ]);
 
@@ -1713,7 +1821,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         ),
       ];
       writeCoachAttendanceCache(
-        dataverseOrgUrlRef.current,
+        getCoachScopedCacheOrgUrl(normalizedCoachId),
         normalizedCoachId,
         next
       );
@@ -1736,7 +1844,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       ...current,
       coachAttendances: "ready",
     }));
-  }, [coachId, coachName]);
+  }, [coachId, coachName, getCoachScopedCacheOrgUrl]);
 
 
   // ---------------------------------------------------------
@@ -1859,6 +1967,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     const request = enqueueDataverse("Loading tasks", async () => {
         const res = await TasksService.getAll({
+          select: [
+            "activityid",
+            "subject",
+            "description",
+            "prioritycode",
+            "scheduledend",
+            "createdon",
+            "statecode",
+            "statuscode",
+            "_regardingobjectid_value",
+          ],
           filter: `statecode eq 0 and _regardingobjectid_value eq ${requestCoachId}`,
           orderBy: ["createdon desc"],
         });
@@ -1869,7 +1988,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         if (activeCoachIdRef.current !== requestCoachId) return;
 
         setTasks(data);
-        writeTaskCache(dataverseOrgUrlRef.current, requestCoachId, data);
+        writeTaskCache(
+          getCoachScopedCacheOrgUrl(requestCoachId),
+          requestCoachId,
+          data
+        );
         lastFetchedRef.current.tasks = Date.now();
         resourceHasUsableDataRef.current.tasks = true;
         backgroundRetryAttemptsRef.current.tasks = 0;
@@ -1912,7 +2035,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     taskInFlightByCoachRef.current[requestCoachId] = request;
     return request;
-  }, [clearBackgroundRetry, coachId, enqueueDataverse, scheduleBackgroundRetry]);
+  }, [
+    clearBackgroundRetry,
+    coachId,
+    enqueueDataverse,
+    getCoachScopedCacheOrgUrl,
+    scheduleBackgroundRetry,
+  ]);
 
   refreshTasksRef.current = refreshTasks;
 
@@ -1925,7 +2054,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       delete lastFetchedRef.current.tasks;
 
       const cached = readTaskCache(
-        dataverseOrgUrlRef.current,
+        getCoachScopedCacheOrgUrl(normalizedCoachId),
         normalizedCoachId
       );
       resourceHasUsableDataRef.current.tasks = cached !== null;
@@ -1966,7 +2095,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     }
 
-  }, [coachId, coachLookupLoading, refreshTasks]);
+  }, [
+    coachId,
+    coachLookupLoading,
+    getCoachScopedCacheOrgUrl,
+    refreshTasks,
+  ]);
 
 
   useEffect(() => {
@@ -1979,11 +2113,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       const startupBootstrap = initialCoachBootstrapRef.current;
       const startupMatchesCoach =
         normalizeGuid(startupBootstrap?.coachId) === normalizedCoachId;
-      const cacheOrgUrl =
-        dataverseOrgUrlRef.current ??
-        (startupMatchesCoach ? startupBootstrap?.orgUrl ?? null : null);
       const cached =
-        readCoachAttendanceCache(cacheOrgUrl, normalizedCoachId) ??
+        readCoachAttendanceCache(
+          getCoachScopedCacheOrgUrl(normalizedCoachId),
+          normalizedCoachId
+        ) ??
         (startupMatchesCoach
           ? initialCoachAttendanceCacheRef.current
           : null);
@@ -2017,7 +2151,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         coachAttendances: "ready",
       }));
     }
-  }, [coachId, coachLookupLoading, refreshCoachAttendances]);
+  }, [
+    coachId,
+    coachLookupLoading,
+    getCoachScopedCacheOrgUrl,
+    refreshCoachAttendances,
+  ]);
 
 
   // Marks Completed in Dataverse, then drops it locally — the list only
@@ -2049,11 +2188,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
     setTasks((prev) => {
       const next = prev.filter((t) => t.activityid !== taskId);
-      writeTaskCache(dataverseOrgUrlRef.current, coachId, next);
+      writeTaskCache(getCoachScopedCacheOrgUrl(coachId), coachId, next);
       return next;
     });
     lastFetchedRef.current.tasks = Date.now();
-  }, [coachId, runDataverseWrite]);
+  }, [coachId, getCoachScopedCacheOrgUrl, runDataverseWrite]);
 
 
   // ---------------------------------------------------------
@@ -2202,9 +2341,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   // rows on screen were never fetched from the table being edited, so no
   // amount of refreshing that table removes them.
   //
-  // So stamp the cache with the org URL it came from and, when that URL
-  // changes, drop the cached tables and the in-memory copies rather than
-  // showing another environment's data.
+  // Stamp the cache with a stable environment/app identifier. Do not rely
+  // only on dataverseOrgUrl because it can be unavailable in Power Apps
+  // Mobile even when environmentId, appId, and user context are available.
   // ---------------------------------------------------------
 
   useEffect(() => {
@@ -2217,7 +2356,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         if (cancelled) return;
 
-        const orgUrl = ctx.app.dataverseOrgUrl ?? null;
+        const orgUrl = getContextCacheEnvironmentKey(ctx);
 
         if (!orgUrl) return;
 
@@ -2248,7 +2387,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         });
 
-        if (previous !== orgUrl && hasCachedRows) {
+        if (!storedEnvironmentMatchesContext(previous, ctx) && hasCachedRows) {
 
           console.warn(
             "[CoachPortal] Cached data did not come from this environment — clearing it.",
@@ -2488,7 +2627,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       .then(async (ctx) => {
 
-        const orgUrl = ctx.app.dataverseOrgUrl ?? null;
+        const orgUrl = getContextCacheEnvironmentKey(ctx);
         dataverseOrgUrlRef.current = orgUrl;
 
         const fullName =
@@ -2511,8 +2650,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           startupBootstrap &&
             orgUrl &&
             userKey &&
-            startupBootstrap.orgUrl.trim().toLowerCase() ===
-              orgUrl.trim().toLowerCase() &&
+            storedEnvironmentMatchesContext(startupBootstrap.orgUrl, ctx) &&
             startupBootstrap.userKey === userKey.trim().toLowerCase()
         );
         if (startupBootstrap && !bootstrapMatchesCurrentAccount) {
