@@ -312,8 +312,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       void ensureFresh([
         "events",
         "performances",
-        "generations",
-        "generationsToCoaches",
       ]);
     }, 250);
 
