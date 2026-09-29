@@ -340,11 +340,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         setGuardianContact(cached.details);
         setGuardianError(null);
         setGuardianLoading(false);
-        setGuardianPhoneLoading(!cached.details.phone);
+        // A cache hit is immediately usable, including a confirmed null phone.
+        // Stale values stay visible while they are refreshed in background.
+        setGuardianPhoneLoading(false);
 
-        // A fresh name-only entry is incomplete. Revalidate it now instead
-        // of waiting for the normal 24-hour guardian freshness interval.
-        if (cached.isFresh && cached.details.phone && !force) return;
+        if (cached.isFresh && !force) return;
       } else if (fallbackName) {
         // On the first-ever load there is no Contact cache yet, but the Player
         // row normally carries the lookup's formatted name. Show that at once

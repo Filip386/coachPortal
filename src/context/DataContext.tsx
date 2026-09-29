@@ -1105,10 +1105,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const guardianContactInFlightRef = useRef<
     Map<string, Promise<GuardianContactDetails>>
   >(new Map());
-  // A Contact can legitimately have no phone. Revalidate a cached null once
-  // per app session, but do not hammer Dataverse every time that Player is
-  // selected when the live Contact still has no supported phone value.
-  const guardianMissingPhoneCheckedRef = useRef<Set<string>>(new Set());
+  // Prevent Player refreshes from enqueueing the same background Contact
+  // batch more than once while an earlier warm-up is still in flight.
+  const guardianWarmupPendingRef = useRef<Set<string>>(new Set());
 
 
   const enqueueDataverse = useCallback(
@@ -1264,15 +1263,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const cacheKey = getGuardianCacheKey(normalizedId);
       const cached = readGuardianContactCache(normalizedId);
+      // A fresh cached null phone is also a complete Contact result: it means
+      // neither supported phone field currently has a value. Re-reading it on
+      // every Player selection defeats the cache and causes a loading flicker.
       if (!options.force && cached?.isFresh) {
-        const hasPhone = Boolean(cached.details.phone?.trim());
-        const missingPhoneAlreadyChecked = cacheKey
-          ? guardianMissingPhoneCheckedRef.current.has(cacheKey)
-          : false;
-
-        if (hasPhone || missingPhoneAlreadyChecked) {
-          return Promise.resolve(cached.details);
-        }
+        return Promise.resolve(cached.details);
       }
 
       // Account context is needed only to scope persistent storage. It must
@@ -1313,13 +1308,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           // it was in flight; in that case it is now safe to persist the result.
           const resolvedCacheKey = cacheKey ?? getGuardianCacheKey(normalizedId);
           writeGuardianContactCache(resolvedCacheKey, normalizedId, details);
-          if (resolvedCacheKey) {
-            if (phone) {
-              guardianMissingPhoneCheckedRef.current.delete(resolvedCacheKey);
-            } else {
-              guardianMissingPhoneCheckedRef.current.add(resolvedCacheKey);
-            }
-          }
           return details;
         }
       ).finally(() => {
@@ -1333,103 +1321,88 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 
 
-  // Warm Guardian Contact details for every cached Player after the initial
-  // app startup has had time to enqueue its critical screen reads. Contacts
-  // are fetched in small batches through the same serialized mobile-safe
-  // queue, then persisted by organization + signed-in account + Contact.
-  // This runs even if Performance has not been opened yet, so a later Player
-  // selection can show both saved name and phone immediately.
+  // Warm Guardian Contact details as soon as cached Players are available.
+  // The regular guardian table cache is intentionally independent of Coach
+  // resolution, so mobile startup never waits for account/Coach scope before
+  // filling it. The optional scoped copy is added whenever context is ready.
   useEffect(() => {
-    if (!guardianCacheReady || players.length === 0) return;
+    if (players.length === 0) return;
 
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const guardianIds = Array.from(
-          new Set(
-            players
-              .map((player) =>
-                normalizeGuid((player as any)._cr9be_member_value)
-              )
-              .filter(Boolean)
+    const guardianIds = Array.from(
+      new Set(
+        players
+          .map((player) =>
+            normalizeGuid((player as any)._cr9be_member_value)
           )
-        ).filter((contactId) => {
-          const cached = readGuardianContactCache(contactId);
-          const cacheKey = getGuardianCacheKey(contactId);
-          const missingPhoneAlreadyChecked = cacheKey
-            ? guardianMissingPhoneCheckedRef.current.has(cacheKey)
-            : false;
-          return !(
-            cached?.isFresh &&
-            (Boolean(cached.details.phone?.trim()) || missingPhoneAlreadyChecked)
+          .filter(Boolean)
+      )
+    ).filter((contactId) => {
+      if (guardianWarmupPendingRef.current.has(contactId)) return false;
+      return !readGuardianContactCache(contactId)?.isFresh;
+    });
+
+    if (guardianIds.length === 0) return;
+    guardianIds.forEach((contactId) =>
+      guardianWarmupPendingRef.current.add(contactId)
+    );
+
+    void (async () => {
+      const batchSize = 25;
+      for (let index = 0; index < guardianIds.length; index += batchSize) {
+        const batch = guardianIds.slice(index, index + batchSize);
+
+        try {
+          const contacts = await runDataverseRead(
+            "Caching guardian details",
+            async () => {
+              const res = await ContactsService.getAll({
+                select: ["contactid", "fullname", "mobilephone", "telephone1"],
+                filter: batch
+                  .map((contactId) => `contactid eq ${contactId}`)
+                  .join(" or "),
+              });
+              return unwrapOrThrow<Contacts>(res);
+            }
           );
-        });
 
-        const batchSize = 25;
-        for (let index = 0; index < guardianIds.length; index += batchSize) {
-          if (cancelled) return;
-          const batch = guardianIds.slice(index, index + batchSize);
+          contacts.forEach((contact) => {
+            const contactId = normalizeGuid(contact.contactid);
+            if (!contactId) return;
 
-          try {
-            const contacts = await runDataverseRead(
-              "Caching guardian details",
-              async () => {
-                const res = await ContactsService.getAll({
-                  select: ["contactid", "fullname", "mobilephone", "telephone1"],
-                  filter: batch
-                    .map((contactId) => `contactid eq ${contactId}`)
-                    .join(" or "),
-                });
-                return unwrapOrThrow<Contacts>(res);
+            const phone =
+              contact.mobilephone?.trim() ||
+              contact.telephone1?.trim() ||
+              null;
+
+            // getGuardianCacheKey can legitimately be null during startup.
+            // writeGuardianContactCache still persists the regular table cache,
+            // which is the cache Performance can read before Coach resolution.
+            writeGuardianContactCache(
+              getGuardianCacheKey(contactId),
+              contactId,
+              {
+                name: contact.fullname?.trim() || null,
+                phone,
               }
             );
-
-            if (cancelled) return;
-
-            contacts.forEach((contact) => {
-              const contactId = normalizeGuid(contact.contactid);
-              const cacheKey = getGuardianCacheKey(contactId);
-              if (!contactId || !cacheKey) return;
-
-              const phone =
-                contact.mobilephone?.trim() ||
-                contact.telephone1?.trim() ||
-                null;
-              writeGuardianContactCache(
-                cacheKey,
-                contactId,
-                {
-                  name: contact.fullname?.trim() || null,
-                  phone,
-                }
-              );
-
-              if (phone) {
-                guardianMissingPhoneCheckedRef.current.delete(cacheKey);
-              } else {
-                guardianMissingPhoneCheckedRef.current.add(cacheKey);
-              }
-            });
-          } catch (guardianWarmupError) {
-            // Warm-up is best effort. The selected Player path keeps its own
-            // retry UX and must not be turned into a screen-level failure.
-            console.warn(
-              "[CoachPortal] Guardian cache warm-up failed:",
-              guardianWarmupError
-            );
-            return;
-          }
+          });
+        } catch (guardianWarmupError) {
+          // Warm-up is best effort. The selected Player path keeps its own
+          // retry UX and must not be turned into a screen-level failure.
+          console.warn(
+            "[CoachPortal] Guardian cache warm-up failed:",
+            guardianWarmupError
+          );
+          return;
+        } finally {
+          batch.forEach((contactId) =>
+            guardianWarmupPendingRef.current.delete(contactId)
+          );
         }
-      })();
-    }, 4_000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
+      }
+    })();
   }, [
     getGuardianCacheKey,
-    guardianCacheReady,
     players,
     readGuardianContactCache,
     runDataverseRead,
@@ -2286,7 +2259,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           guardianContactCacheRef.current.clear();
           guardianTableCacheRef.current.clear();
           guardianContactInFlightRef.current.clear();
-          guardianMissingPhoneCheckedRef.current.clear();
+          guardianWarmupPendingRef.current.clear();
 
           (
             [
