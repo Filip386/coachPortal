@@ -23,6 +23,14 @@ const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
   return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
 };
 
+const normalizeGuid = (value?: string | null): string =>
+  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+
+const sameGuid = (left?: string | null, right?: string | null): boolean => {
+  const normalizedLeft = normalizeGuid(left);
+  return Boolean(normalizedLeft) && normalizedLeft === normalizeGuid(right);
+};
+
 interface PerformanceScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
@@ -31,7 +39,7 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, guardianCacheReady, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
   // Only the Player table blocks the visible screen. The other resources keep
   // loading in the background, so cached Players and their guardian details
   // remain visible while Coach/Generation mapping is still resolving.
@@ -54,7 +62,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
-  const [genAutoSelected, setGenAutoSelected] = useState(false);
+  const autoSelectedCoachRef = React.useRef<string | null>(null);
   const [search, setSearch] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -91,52 +99,156 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   }, [ensureFresh]);
 
   const generationTabs = useMemo(() => {
-    const seen = new Set<string>();
-    const result: { id: string; name: string }[] = [];
+    const sortGenerations = (items: { id: string; name: string }[]) => {
+      const yearOf = (name: string) => {
+        const match = name.match(/\d{4}/) || name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : Infinity;
+      };
+      return items.sort((left, right) => {
+        const leftYear = yearOf(left.name);
+        const rightYear = yearOf(right.name);
+        return leftYear !== rightYear
+          ? leftYear - rightYear
+          : left.name.localeCompare(right.name);
+      });
+    };
 
-    const coachPlayers = coachId
-      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
-      : [];
-    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
-
-    sourcePlayers.forEach((p) => {
-      const id = (p as any)._cr9be_generation_value as string | undefined;
-      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
-      if (id && name && !seen.has(id)) {
-        seen.add(id);
-        result.push({ id, name });
-      }
-    });
-
-    generationsToCoaches
-      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
-      .forEach((gtc) => {
-        const id = (gtc as any)._axm365_generation_value as string | undefined;
-        const name = gtc.axm365_generationname;
-        if (id && name && !seen.has(id)) {
-          seen.add(id);
+    const collectPlayerGenerations = () => {
+      const seen = new Set<string>();
+      const result: { id: string; name: string }[] = [];
+      players.forEach((player) => {
+        const id = (player as any)._cr9be_generation_value as string | undefined;
+        const name =
+          player.cr9be_generationname || lookupName(player, "cr9be_generation");
+        const normalizedId = normalizeGuid(id);
+        if (id && name && normalizedId && !seen.has(normalizedId)) {
+          seen.add(normalizedId);
           result.push({ id, name });
         }
-    });
+      });
+      return result;
+    };
 
-    const yearOf = (s: string) => { const m = s.match(/\d{4}/) || s.match(/\d+/); return m ? parseInt(m[0], 10) : Infinity; };
-    return result.sort((a, b) => { const ya = yearOf(a.name), yb = yearOf(b.name); return ya !== yb ? ya - yb : a.name.localeCompare(b.name); });
-  }, [coachId, players, generationsToCoaches]);
+    const playerGenerations = collectPlayerGenerations();
+    if (!coachId) return sortGenerations(playerGenerations);
+
+    const seen = new Set<string>();
+    const related: { id: string; name: string }[] = [];
+    const addRelatedGeneration = (id?: string, name?: string | null) => {
+      const normalizedId = normalizeGuid(id);
+      if (!id || !name || !normalizedId || seen.has(normalizedId)) return;
+      seen.add(normalizedId);
+      related.push({ id, name });
+    };
+
+    players
+      .filter((player) => sameGuid((player as any)._cr9be_coach_value, coachId))
+      .forEach((player) => {
+        addRelatedGeneration(
+          (player as any)._cr9be_generation_value as string | undefined,
+          player.cr9be_generationname || lookupName(player, "cr9be_generation")
+        );
+      });
+
+    allGenerations
+      .filter((generation) =>
+        sameGuid((generation as any)._cr9be_coach_value, coachId)
+      )
+      .forEach((generation) => {
+        addRelatedGeneration(
+          generation.axm365_generationid,
+          generation.axm365_name
+        );
+      });
+
+    generationsToCoaches
+      .filter((mapping) =>
+        sameGuid((mapping as any)._axm365_coach_value, coachId)
+      )
+      .forEach((mapping) => {
+        addRelatedGeneration(
+          (mapping as any)._axm365_generation_value as string | undefined,
+          mapping.axm365_generationname
+        );
+      });
+
+    // Never expose a generation filter that produces an empty Player list.
+    // If cached relationship tables disagree with cached Players, fall back to
+    // the generations actually present on those Players until refresh repairs it.
+    const relatedWithPlayers = related.filter((generation) =>
+      players.some((player) =>
+        sameGuid((player as any)._cr9be_generation_value, generation.id)
+      )
+    );
+
+    return sortGenerations(
+      relatedWithPlayers.length > 0 ? relatedWithPlayers : playerGenerations
+    );
+  }, [coachId, players, allGenerations, generationsToCoaches]);
+
+  const coachPlayers = useMemo(() => {
+    if (!coachId || generationTabs.length === 0) return players;
+    const filtered = players.filter((player) =>
+      generationTabs.some((generation) =>
+        sameGuid(
+          (player as any)._cr9be_generation_value,
+          generation.id
+        )
+      )
+    );
+    return filtered.length > 0 ? filtered : players;
+  }, [coachId, generationTabs, players]);
 
   const primaryGenId = useMemo(() => {
-    if (!coachId) return generationTabs[0]?.id ?? null;
-    const fromTable = allGenerations.find((g) => (g as any)._cr9be_coach_value === coachId);
-    return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
-  }, [coachId, allGenerations, generationTabs]);
+    if (!coachId) return null;
+
+    const primaryGeneration = allGenerations.find((generation) =>
+      sameGuid((generation as any)._cr9be_coach_value, coachId)
+    );
+    const primaryTab = generationTabs.find((generation) =>
+      sameGuid(generation.id, primaryGeneration?.axm365_generationid)
+    );
+    const candidates = [
+      primaryTab?.id,
+      ...generationTabs.map((generation) => generation.id),
+    ];
+
+    return candidates.find(
+      (candidate): candidate is string =>
+        Boolean(candidate) &&
+        players.some((player) =>
+          sameGuid((player as any)._cr9be_generation_value, candidate)
+        )
+    ) ?? null;
+  }, [coachId, allGenerations, generationTabs, players]);
 
   useEffect(() => {
-    if (primaryGenId && !genAutoSelected) {
-      setSelectedGenId(primaryGenId);
-      setGenAutoSelected(true);
-      const first = players.filter((p) => (p as any)._cr9be_generation_value === primaryGenId)[0];
-      if (first) setSelectedId(first.cr9be_playerid);
+    const normalizedCoachId = normalizeGuid(coachId);
+
+    if (!normalizedCoachId) {
+      autoSelectedCoachRef.current = null;
+      setSelectedGenId("all");
+      return;
     }
-  }, [primaryGenId, genAutoSelected, players]);
+
+    if (
+      autoSelectedCoachRef.current === normalizedCoachId ||
+      selectedPlayerId ||
+      !primaryGenId
+    ) {
+      return;
+    }
+
+    const first = players.find((p) =>
+      sameGuid((p as any)._cr9be_generation_value, primaryGenId)
+    );
+
+    if (first) {
+      setSelectedGenId(primaryGenId);
+      setSelectedId(first.cr9be_playerid);
+      autoSelectedCoachRef.current = normalizedCoachId;
+    }
+  }, [coachId, primaryGenId, players, selectedPlayerId]);
 
   useEffect(() => {
     if (!selectedPlayerId) return;
@@ -146,20 +258,34 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     if (genId) setSelectedGenId(genId);
   }, [selectedPlayerId, players]);
 
-  useEffect(() => {
-    if (!selectedId && players.length > 0) setSelectedId(players[0].cr9be_playerid);
-  }, [players, selectedId]);
-
   const playersInGen = useMemo(
-    () => selectedGenId === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === selectedGenId),
-    [players, selectedGenId]
+    () => selectedGenId === "all"
+      ? coachPlayers
+      : coachPlayers.filter((p) =>
+          sameGuid((p as any)._cr9be_generation_value, selectedGenId)
+        ),
+    [coachPlayers, selectedGenId]
   );
+
+  useEffect(() => {
+    if (playersInGen.length === 0) {
+      if (selectedId) setSelectedId(null);
+      return;
+    }
+
+    const selectedIsVisible = playersInGen.some((candidate) =>
+      sameGuid(candidate.cr9be_playerid, selectedId)
+    );
+    if (!selectedIsVisible) {
+      setSelectedId(playersInGen[0].cr9be_playerid);
+    }
+  }, [playersInGen, selectedId]);
 
   const filteredPlayers = search
     ? playersInGen.filter((p) => (p.cr9be_name || "").toLowerCase().includes(search.toLowerCase()))
     : playersInGen;
 
-  const player = players.find((p) => p.cr9be_playerid === selectedId);
+  const player = playersInGen.find((p) => sameGuid(p.cr9be_playerid, selectedId));
   const playerName = player ? (player.cr9be_name || "Player") : "Player";
   const playerPos = lookupName(player, "cr9be_position");
   const playerNum = player ? (player.cr9be_number ?? "?") : "?";
@@ -300,7 +426,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     return () => {
       guardianRequestVersionRef.current += 1;
     };
-  }, [guardianId, guardianLookupName, guardianRetryToken, loadGuardian]);
+  }, [guardianId, guardianLookupName, guardianCacheReady, guardianRetryToken, loadGuardian]);
 
   useEffect(() => {
     if (players.length === 0) return;
@@ -309,14 +435,18 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     // The remaining screen data then follows without creating concurrent
     // Dataverse bridge calls.
     const timer = window.setTimeout(() => {
+      // These reads remain non-blocking for the visible cached Player card,
+      // but Performance now refreshes its own Generation mappings again.
       void ensureFresh([
         "events",
         "performances",
+        "generations",
+        "generationsToCoaches",
       ]);
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [ensureFresh, guardianId, players.length]);
+  }, [ensureFresh, players.length]);
 
   // Memoized on [performances, selectedId] so the array reference is stable across
   // re-renders — otherwise the Edit Mode prefill effect below (which depends on
@@ -548,14 +678,20 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           {generationTabs.length > 0 && (
             <div style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
               {[{ id: "all", name: "ALL" }, ...generationTabs].map((tab) => {
-                const active = selectedGenId === tab.id;
+                const active = tab.id === "all"
+                  ? selectedGenId === "all"
+                  : sameGuid(selectedGenId, tab.id);
                 return (
                   <button
                     key={tab.id}
                     ref={(el) => { if (active && el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" }); }}
                     onClick={() => {
                       setSelectedGenId(tab.id);
-                      const first = (tab.id === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === tab.id))[0];
+                      const first = (tab.id === "all"
+                        ? coachPlayers
+                        : coachPlayers.filter((p) =>
+                            sameGuid((p as any)._cr9be_generation_value, tab.id)
+                          ))[0];
                       setSelectedId(first?.cr9be_playerid ?? null);
                     }}
                     style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: `1px solid ${active ? COLORS.navy : COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}

@@ -6,6 +6,14 @@ import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar, Sta
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
+const normalizeGuid = (value?: string | null): string =>
+  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+
+const sameGuid = (left?: string | null, right?: string | null): boolean => {
+  const normalizedLeft = normalizeGuid(left);
+  return Boolean(normalizedLeft) && normalizedLeft === normalizeGuid(right);
+};
+
 interface PlayersScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
@@ -13,18 +21,10 @@ interface PlayersScreenProps {
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   const { players, performances, coachId, allGenerations, generationsToCoaches, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
-  const screenLoading = isLoadingResources([
-    "players",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenLoadError = hasResourceErrors([
-    "players",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
+  // Cached Players can render immediately. Performance and Generation tables
+  // refresh behind the list and must not blank the Squad screen.
+  const screenLoading = isLoadingResources(["players"]);
+  const screenLoadError = hasResourceErrors(["players"]);
   const screenError = getResourceError([
     "players",
     "performances",
@@ -39,7 +39,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   ]);
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
-  const [genAutoSelected, setGenAutoSelected] = useState(false);
+  const autoSelectedCoachRef = React.useRef<string | null>(null);
   const [showGenDropdown, setShowGenDropdown] = useState(false);
   const [genSearch, setGenSearch] = useState("");
   const [search, setSearch] = useState("");
@@ -63,77 +63,142 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
     setRefreshing(false);
   };
 
-  // Build generation list for this coach: from their players + secondary junction table.
-  // Falls back to all player generations when no coach-specific match (e.g. during load or test accounts).
+  // Before Coach resolution, list every generation found on cached Players.
+  // Afterwards prefer Coach relationships, but never keep a relationship-only
+  // option that would produce an empty Player list.
   const generationTabs = useMemo(() => {
-    const seen = new Set<string>();
-    const result: { id: string; name: string }[] = [];
+    const sortGenerations = (items: { id: string; name: string }[]) => {
+      const yearOf = (name: string) => {
+        const match = name.match(/\d{4}/) || name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : Number.POSITIVE_INFINITY;
+      };
+      return items.sort((left, right) => {
+        const leftYear = yearOf(left.name);
+        const rightYear = yearOf(right.name);
+        return leftYear !== rightYear
+          ? leftYear - rightYear
+          : left.name.localeCompare(right.name);
+      });
+    };
 
-    const coachPlayers = coachId
-      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
-      : [];
-    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
-
-    sourcePlayers.forEach((p) => {
-      const id = (p as any)._cr9be_generation_value as string | undefined;
-      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
-      if (id && name && !seen.has(id)) {
-        seen.add(id);
-        result.push({ id, name });
+    const playerSeen = new Set<string>();
+    const playerGenerations: { id: string; name: string }[] = [];
+    players.forEach((player) => {
+      const id = (player as any)._cr9be_generation_value as string | undefined;
+      const name =
+        player.cr9be_generationname || lookupName(player, "cr9be_generation");
+      const normalizedId = normalizeGuid(id);
+      if (id && name && normalizedId && !playerSeen.has(normalizedId)) {
+        playerSeen.add(normalizedId);
+        playerGenerations.push({ id, name });
       }
     });
 
-    // Secondary generations from the junction table
-    generationsToCoaches
-      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
-      .forEach((gtc) => {
-        const id = (gtc as any)._axm365_generation_value as string | undefined;
-        const name = gtc.axm365_generationname;
-        if (id && name && !seen.has(id)) {
-          seen.add(id);
-          result.push({ id, name });
-        }
+    if (!coachId) return sortGenerations(playerGenerations);
+
+    const seen = new Set<string>();
+    const related: { id: string; name: string }[] = [];
+    const addRelatedGeneration = (id?: string, name?: string | null) => {
+      const normalizedId = normalizeGuid(id);
+      if (!id || !name || !normalizedId || seen.has(normalizedId)) return;
+      seen.add(normalizedId);
+      related.push({ id, name });
+    };
+
+    players
+      .filter((player) => sameGuid((player as any)._cr9be_coach_value, coachId))
+      .forEach((player) => {
+        addRelatedGeneration(
+          (player as any)._cr9be_generation_value as string | undefined,
+          player.cr9be_generationname || lookupName(player, "cr9be_generation")
+        );
       });
 
-    const yearOf = (s: string) => {
-      const m = s.match(/\d{4}/) || s.match(/\d+/);
-      return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
-    };
-    return result.sort((a, b) => {
-      const ya = yearOf(a.name), yb = yearOf(b.name);
-      return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
-    });
-  }, [coachId, players, generationsToCoaches]);
+    allGenerations
+      .filter((generation) =>
+        sameGuid((generation as any)._cr9be_coach_value, coachId)
+      )
+      .forEach((generation) => {
+        addRelatedGeneration(
+          generation.axm365_generationid,
+          generation.axm365_name
+        );
+      });
 
-  // Primary generation: first from allGenerations table for this coach, fallback to first in list
+    generationsToCoaches
+      .filter((mapping) =>
+        sameGuid((mapping as any)._axm365_coach_value, coachId)
+      )
+      .forEach((mapping) => {
+        addRelatedGeneration(
+          (mapping as any)._axm365_generation_value as string | undefined,
+          mapping.axm365_generationname
+        );
+      });
+
+    const relatedWithPlayers = related.filter((generation) =>
+      players.some((player) =>
+        sameGuid((player as any)._cr9be_generation_value, generation.id)
+      )
+    );
+
+    return sortGenerations(
+      relatedWithPlayers.length > 0 ? relatedWithPlayers : playerGenerations
+    );
+  }, [coachId, players, allGenerations, generationsToCoaches]);
+
+  const visiblePlayers = useMemo(() => {
+    if (!coachId || generationTabs.length === 0) return players;
+    const relatedPlayers = players.filter((player) =>
+      generationTabs.some((generation) =>
+        sameGuid((player as any)._cr9be_generation_value, generation.id)
+      )
+    );
+    return relatedPlayers.length > 0 ? relatedPlayers : players;
+  }, [coachId, generationTabs, players]);
+
   const primaryGenId = useMemo(() => {
-    if (!coachId) return generationTabs[0]?.id ?? null;
-    const fromTable = allGenerations.find((g) => (g as any)._cr9be_coach_value === coachId);
-    return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
+    if (!coachId) return null;
+    const primaryGeneration = allGenerations.find((generation) =>
+      sameGuid((generation as any)._cr9be_coach_value, coachId)
+    );
+    return generationTabs.find((generation) =>
+      sameGuid(generation.id, primaryGeneration?.axm365_generationid)
+    )?.id ?? generationTabs[0]?.id ?? null;
   }, [coachId, allGenerations, generationTabs]);
 
   useEffect(() => {
-    if (primaryGenId && !genAutoSelected) {
-      setGenId(primaryGenId);
-      setGenAutoSelected(true);
+    const normalizedCoachId = normalizeGuid(coachId);
+    if (!normalizedCoachId) {
+      autoSelectedCoachRef.current = null;
+      setGenId("all");
+      return;
     }
-  }, [primaryGenId, genAutoSelected]);
+
+    if (
+      primaryGenId &&
+      autoSelectedCoachRef.current !== normalizedCoachId
+    ) {
+      setGenId(primaryGenId);
+      autoSelectedCoachRef.current = normalizedCoachId;
+    }
+  }, [coachId, primaryGenId]);
 
   // Build filter tabs from real data — only positions that exist
   const positionTabs = Array.from(
-    new Set(players.map((p) => lookupName(p, "cr9be_position")).filter(Boolean))
+    new Set(visiblePlayers.map((p) => lookupName(p, "cr9be_position")).filter(Boolean))
   ) as string[];
 
-  const filtered = players.filter((p) => {
+  const filtered = visiblePlayers.filter((p) => {
     const matchPos = pos === "ALL" || (lookupName(p, "cr9be_position") ?? "") === pos;
-    const matchGen = genId === "all" || (p as any)._cr9be_generation_value === genId;
+    const matchGen = genId === "all" || sameGuid((p as any)._cr9be_generation_value, genId);
     const matchSearch = search === "" || (p.cr9be_name || "").toLowerCase().includes(search.toLowerCase());
     return matchPos && matchGen && matchSearch;
   });
 
   const selectedGenName = genId === "all"
     ? "All Years"
-    : generationTabs.find((g) => g.id === genId)?.name ?? "All Years";
+    : generationTabs.find((generation) => sameGuid(generation.id, genId))?.name ?? "All Years";
 
   const genOptions = [
     { id: "all", name: "All Generations" },
@@ -186,7 +251,9 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
                       <div style={{ padding: 16, textAlign: "center", color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>NO YEARS FOUND</div>
                     )}
                     {genOptions.map((opt) => {
-                      const selected = genId === opt.id;
+                      const selected = opt.id === "all"
+                        ? genId === "all"
+                        : sameGuid(genId, opt.id);
                       return (
                         <button
                           key={opt.id}

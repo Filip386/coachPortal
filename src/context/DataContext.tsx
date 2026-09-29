@@ -455,7 +455,7 @@ const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
 const BACKGROUND_RETRY_DELAYS_MS = [15_000, 45_000, 120_000] as const;
 const GUARDIAN_CACHE_PREFIX = "cvf_guardian_v2";
 const GUARDIAN_CACHE_FRESH_MS = 30 * 60_000;
-const GUARDIAN_CACHE_RETENTION_MS = 24 * 60 * 60_000;
+const GUARDIAN_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 
 interface GuardianContactCacheEnvelope {
@@ -956,6 +956,106 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     [getGuardianCacheKey, readGuardianContactCache, runDataverseRead, writeGuardianContactCache]
   );
+
+
+  // Warm Guardian Contact details for every cached Player after the initial
+  // app startup has had time to enqueue its critical screen reads. Contacts
+  // are fetched in small batches through the same serialized mobile-safe
+  // queue, then persisted by organization + signed-in account + Contact.
+  // This runs even if Performance has not been opened yet, so a later Player
+  // selection can show both saved name and phone immediately.
+  useEffect(() => {
+    if (!guardianCacheReady || players.length === 0) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const guardianIds = Array.from(
+          new Set(
+            players
+              .map((player) =>
+                normalizeGuid((player as any)._cr9be_member_value)
+              )
+              .filter(Boolean)
+          )
+        ).filter((contactId) => {
+          const cached = readGuardianContactCache(contactId);
+          const cacheKey = getGuardianCacheKey(contactId);
+          const missingPhoneAlreadyChecked = cacheKey
+            ? guardianMissingPhoneCheckedRef.current.has(cacheKey)
+            : false;
+          return !(
+            cached?.isFresh &&
+            (Boolean(cached.details.phone?.trim()) || missingPhoneAlreadyChecked)
+          );
+        });
+
+        const batchSize = 25;
+        for (let index = 0; index < guardianIds.length; index += batchSize) {
+          if (cancelled) return;
+          const batch = guardianIds.slice(index, index + batchSize);
+
+          try {
+            const contacts = await runDataverseRead(
+              "Caching guardian details",
+              async () => {
+                const res = await ContactsService.getAll({
+                  select: ["contactid", "fullname", "mobilephone", "telephone1"],
+                  filter: batch
+                    .map((contactId) => `contactid eq ${contactId}`)
+                    .join(" or "),
+                });
+                return unwrapOrThrow<Contacts>(res);
+              }
+            );
+
+            if (cancelled) return;
+
+            contacts.forEach((contact) => {
+              const contactId = normalizeGuid(contact.contactid);
+              const cacheKey = getGuardianCacheKey(contactId);
+              if (!contactId || !cacheKey) return;
+
+              const phone =
+                contact.mobilephone?.trim() ||
+                contact.telephone1?.trim() ||
+                null;
+              writeGuardianContactCache(cacheKey, {
+                name: contact.fullname?.trim() || null,
+                phone,
+              });
+
+              if (phone) {
+                guardianMissingPhoneCheckedRef.current.delete(cacheKey);
+              } else {
+                guardianMissingPhoneCheckedRef.current.add(cacheKey);
+              }
+            });
+          } catch (guardianWarmupError) {
+            // Warm-up is best effort. The selected Player path keeps its own
+            // retry UX and must not be turned into a screen-level failure.
+            console.warn(
+              "[CoachPortal] Guardian cache warm-up failed:",
+              guardianWarmupError
+            );
+            return;
+          }
+        }
+      })();
+    }, 4_000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    getGuardianCacheKey,
+    guardianCacheReady,
+    players,
+    readGuardianContactCache,
+    runDataverseRead,
+    writeGuardianContactCache,
+  ]);
 
 
   const runResourceRefresh = useCallback(
