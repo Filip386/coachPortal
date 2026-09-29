@@ -6,6 +6,7 @@ import { BottomNav } from "./components/shared";
 import {
   HomeScreen,
   AttendanceScreen,
+  CoachAttendanceHistoryScreen,
   PerformanceScreen,
   InvoicesScreen,
   CalendarScreen,
@@ -96,6 +97,7 @@ const App: React.FC = () => {
     switch (activeNav) {
       case "home":        return <HomeScreen go={go} />;
       case "attendance":  return <AttendanceScreen go={go} goBack={goBack} initialEventId={selectedEventId} />;
+      case "coach-attendance": return <CoachAttendanceHistoryScreen go={go} goBack={goBack} />;
       case "performance": return <PerformanceScreen go={go} goBack={goBack} selectedPlayerId={selectedPlayerId} initialEventId={selectedEventId} />;
       case "invoices":    return <InvoicesScreen go={go} goBack={goBack} />;
       case "calendar":    return <CalendarScreen go={go} goBack={goBack} />;

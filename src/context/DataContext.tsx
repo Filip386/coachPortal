@@ -14,6 +14,7 @@ import { getContext } from "@microsoft/power-apps/app";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
 import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
 import { Axm365_eventattendancesService } from "../generated/services/Axm365_eventattendancesService";
+import { Axm365_eventcoachattendancesService } from "../generated/services/Axm365_eventcoachattendancesService";
 import { InvoicesService } from "../generated/services/InvoicesService";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Axm365_generationsService } from "../generated/services/Axm365_generationsService";
@@ -25,6 +26,7 @@ import { TasksService } from "../generated/services/TasksService";
 import type { Cr9be_players } from "../generated/models/Cr9be_playersModel";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
+import type { Axm365_eventcoachattendances } from "../generated/models/Axm365_eventcoachattendancesModel";
 import type { Invoices } from "../generated/models/InvoicesModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import type { Axm365_generations } from "../generated/models/Axm365_generationsModel";
@@ -48,6 +50,7 @@ export type DataResource =
   | "players"
   | "events"
   | "attendances"
+  | "coachAttendances"
   | "invoices"
   | "facilities"
   | "performances"
@@ -114,6 +117,9 @@ interface DataContextValue {
   players: Cr9be_players[];
   events: Axm365_events[];
   attendances: Axm365_eventattendances[];
+  /** Clock-in rows for the resolved Coach. Absence is derived by comparing
+   *  these records with that Coach's past Events. */
+  coachAttendances: Axm365_eventcoachattendances[];
   invoices: Invoices[];
   facilities: Facility[];
   performances: Axm365_playereventperformances[];
@@ -140,6 +146,7 @@ interface DataContextValue {
   refreshPlayers: () => Promise<void>;
   refreshEvents: () => Promise<void>;
   refreshAttendances: () => Promise<void>;
+  refreshCoachAttendances: () => Promise<void>;
   refreshInvoices: () => Promise<void>;
   refreshFacilities: () => Promise<void>;
   refreshPerformances: () => Promise<void>;
@@ -147,6 +154,13 @@ interface DataContextValue {
   refreshGenerationsToCoaches: () => Promise<void>;
   refreshCoach: () => Promise<void>;
   refreshTasks: () => Promise<void>;
+  /** Reflect a confirmed clock-in in memory and the scoped cache before its
+   *  background Dataverse revalidation finishes. */
+  recordCoachClockIn: (
+    eventId: string,
+    attendanceId: string,
+    clockIn: string
+  ) => void;
   ensureFresh: (
     resources: DataResource[],
     options?: EnsureFreshOptions
@@ -200,6 +214,8 @@ const CACHE = {
 const LEGACY_TASK_CACHE_KEY = "cvf_tasks";
 const TASK_CACHE_PREFIX = "cvf_tasks_v2";
 const TASK_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
+const COACH_ATTENDANCE_CACHE_PREFIX = "cvf_coach_attendances_v1";
+const COACH_ATTENDANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const COACH_IDENTITY_CACHE_PREFIX = "cvf_coach_identity_v1";
 const COACH_IDENTITY_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
@@ -207,6 +223,12 @@ const COACH_IDENTITY_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 interface TaskCacheEnvelope {
   cachedAt: number;
   tasks: Tasks[];
+}
+
+
+interface CoachAttendanceCacheEnvelope {
+  cachedAt: number;
+  attendances: Axm365_eventcoachattendances[];
 }
 
 
@@ -226,6 +248,7 @@ const RESOURCE_MAX_AGE_MS: Record<DataResource, number> = {
   players: 5 * 60_000,
   events: 60_000,
   attendances: 30_000,
+  coachAttendances: 30_000,
   invoices: 2 * 60_000,
   facilities: 5 * 60_000,
   performances: 60_000,
@@ -325,6 +348,61 @@ function writeTaskCache(
 }
 
 
+function coachAttendanceCacheKey(orgUrl: string, coachId: string): string {
+  return `${COACH_ATTENDANCE_CACHE_PREFIX}:${encodeURIComponent(
+    orgUrl.trim().toLowerCase()
+  )}:${normalizeGuid(coachId)}`;
+}
+
+
+function readCoachAttendanceCache(
+  orgUrl: string | null,
+  coachId: string
+): CoachAttendanceCacheEnvelope | null {
+  if (!orgUrl || !coachId) return null;
+
+  try {
+    const key = coachAttendanceCacheKey(orgUrl, coachId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as CoachAttendanceCacheEnvelope;
+    if (
+      !Array.isArray(parsed?.attendances) ||
+      typeof parsed?.cachedAt !== "number" ||
+      Date.now() - parsed.cachedAt > COACH_ATTENDANCE_CACHE_MAX_AGE_MS
+    ) {
+      localStorage.removeItem(key);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+
+function writeCoachAttendanceCache(
+  orgUrl: string | null,
+  coachId: string | null,
+  attendances: Axm365_eventcoachattendances[]
+): void {
+  if (!orgUrl || !coachId) return;
+
+  try {
+    const value: CoachAttendanceCacheEnvelope = {
+      cachedAt: Date.now(),
+      attendances,
+    };
+    localStorage.setItem(
+      coachAttendanceCacheKey(orgUrl, coachId),
+      JSON.stringify(value)
+    );
+  } catch {}
+}
+
+
 function coachIdentityCacheKey(orgUrl: string, userKey: string): string {
   return `${COACH_IDENTITY_CACHE_PREFIX}:${encodeURIComponent(
     orgUrl.trim().toLowerCase()
@@ -411,6 +489,9 @@ function createInitialResourceStatus(): Record<DataResource, DataResourceStatus>
     players: hasUsableCache(CACHE.players) ? "ready" : "idle",
     events: hasUsableCache(CACHE.events) ? "ready" : "idle",
     attendances: hasUsableCache(CACHE.attendances) ? "ready" : "idle",
+    // Coach attendance is scoped by organization + Coach, so its cache can
+    // only be selected after identity resolution.
+    coachAttendances: "idle",
     invoices: hasUsableCache(CACHE.invoices) ? "ready" : "idle",
     facilities: hasUsableCache(CACHE.facilities) ? "ready" : "idle",
     performances: hasUsableCache(CACHE.performances) ? "ready" : "idle",
@@ -614,6 +695,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       readCache(CACHE.attendances)
     );
 
+  // Restored only after Coach identity resolves because this cache is scoped
+  // by Dataverse organization + Coach id.
+  const [coachAttendances, setCoachAttendances] =
+    useState<Axm365_eventcoachattendances[]>([]);
+
   const [invoices, setInvoices] = useState<Invoices[]>(() =>
     readCache(CACHE.invoices)
   );
@@ -659,6 +745,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     players: resourceStatus.players === "ready",
     events: resourceStatus.events === "ready",
     attendances: resourceStatus.attendances === "ready",
+    coachAttendances: false,
     invoices: resourceStatus.invoices === "ready",
     facilities: resourceStatus.facilities === "ready",
     performances: resourceStatus.performances === "ready",
@@ -683,6 +770,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     ) => Promise<void>) | null
   >(null);
   const refreshTasksRef = useRef<(() => Promise<void>) | null>(null);
+  const refreshCoachAttendancesRef = useRef<(() => Promise<void>) | null>(null);
 
   const [error, setError] =
     useState<string | null>(null);
@@ -768,6 +856,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const guardianCacheUserKeyRef = useRef<string | null>(null);
   const activeCoachIdRef = useRef<string | null>(null);
   const taskInFlightByCoachRef = useRef<Record<string, Promise<void>>>({});
+  const coachAttendanceInFlightByCoachRef = useRef<
+    Record<string, Promise<void>>
+  >({});
+  // A confirmed create is merged into any older in-flight read so mobile
+  // eventual consistency cannot briefly turn the new clock-in into Absent.
+  const pendingCoachClockInsRef = useRef<
+    Map<string, Axm365_eventcoachattendances>
+  >(new Map());
   const guardianContactCacheRef = useRef<
     Map<string, GuardianContactCacheEnvelope>
   >(new Map());
@@ -1224,6 +1320,176 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
 
   // ---------------------------------------------------------
+  // REFRESH COACH ATTENDANCES
+  //
+  // This is intentionally separate from player event attendance. It is
+  // Coach-scoped, cached per environment + Coach, and restored only after
+  // the signed-in Coach is known.
+  // ---------------------------------------------------------
+
+  const refreshCoachAttendances = useCallback(async () => {
+    if (!coachId) return;
+
+    const requestCoachId = normalizeGuid(coachId);
+    const existingRequest =
+      coachAttendanceInFlightByCoachRef.current[requestCoachId];
+    if (existingRequest) return existingRequest;
+
+    clearBackgroundRetry("coachAttendances");
+    const hadUsableData =
+      resourceHasUsableDataRef.current.coachAttendances;
+    setResourceErrors((current) => {
+      if (!current.coachAttendances) return current;
+      const next = { ...current };
+      delete next.coachAttendances;
+      return next;
+    });
+    setResourceStatus((current) => ({
+      ...current,
+      coachAttendances: hadUsableData ? "refreshing" : "loading",
+    }));
+
+    const request = enqueueDataverse("Loading coach attendances", async () => {
+      const data = await fetchAllPages<Axm365_eventcoachattendances>(
+        (skipToken) =>
+          Axm365_eventcoachattendancesService.getAll({
+            filter: `statecode eq 0 and _axm365_coach_value eq ${requestCoachId}`,
+            orderBy: ["createdon desc"],
+            ...(skipToken ? { skipToken } : {}),
+          })
+      );
+
+      if (activeCoachIdRef.current !== requestCoachId) return;
+
+      const returnedIds = new Set(
+        data.map((item) => normalizeGuid(item.axm365_eventcoachattendanceid))
+      );
+      const merged = [...data];
+
+      pendingCoachClockInsRef.current.forEach((pending, attendanceId) => {
+        if (returnedIds.has(attendanceId)) {
+          pendingCoachClockInsRef.current.delete(attendanceId);
+          return;
+        }
+
+        if (normalizeGuid(pending._axm365_coach_value) === requestCoachId) {
+          merged.unshift(pending);
+        }
+      });
+
+      setCoachAttendances(merged);
+      writeCoachAttendanceCache(
+        dataverseOrgUrlRef.current,
+        requestCoachId,
+        merged
+      );
+      lastFetchedRef.current.coachAttendances = Date.now();
+      resourceHasUsableDataRef.current.coachAttendances = true;
+      backgroundRetryAttemptsRef.current.coachAttendances = 0;
+      setResourceStatus((current) => ({
+        ...current,
+        coachAttendances: "ready",
+      }));
+    })
+      .catch((refreshError) => {
+        if (activeCoachIdRef.current === requestCoachId) {
+          if (hadUsableData) {
+            scheduleBackgroundRetry("coachAttendances", () => {
+              const retry = refreshCoachAttendancesRef.current;
+              if (retry) void retry().catch(() => {});
+            });
+          } else {
+            setResourceErrors((current) => ({
+              ...current,
+              coachAttendances: getErrorMessage(
+                refreshError,
+                "Failed to load coach attendance."
+              ),
+            }));
+          }
+
+          setResourceStatus((current) => ({
+            ...current,
+            coachAttendances: hadUsableData ? "stale" : "error",
+          }));
+        }
+        throw refreshError;
+      })
+      .finally(() => {
+        delete coachAttendanceInFlightByCoachRef.current[requestCoachId];
+      });
+
+    coachAttendanceInFlightByCoachRef.current[requestCoachId] = request;
+    return request;
+  }, [
+    clearBackgroundRetry,
+    coachId,
+    enqueueDataverse,
+    scheduleBackgroundRetry,
+  ]);
+
+  refreshCoachAttendancesRef.current = refreshCoachAttendances;
+
+
+  const recordCoachClockIn = useCallback((
+    eventId: string,
+    attendanceId: string,
+    clockIn: string
+  ) => {
+    const normalizedCoachId = normalizeGuid(coachId);
+    const normalizedEventId = normalizeGuid(eventId);
+    const normalizedAttendanceId = normalizeGuid(attendanceId);
+    if (!normalizedCoachId || !normalizedEventId || !normalizedAttendanceId) {
+      return;
+    }
+
+    const confirmedRecord = {
+      axm365_eventcoachattendanceid: normalizedAttendanceId,
+      axm365_name: `${coachName ?? "Coach"} - ${new Date(clockIn).toLocaleDateString()}`,
+      axm365_clockin: clockIn,
+      _axm365_coach_value: normalizedCoachId,
+      _axm365_event_value: normalizedEventId,
+      statecode: 0,
+    } as Axm365_eventcoachattendances;
+
+    pendingCoachClockInsRef.current.set(
+      normalizedAttendanceId,
+      confirmedRecord
+    );
+
+    setCoachAttendances((current) => {
+      const next = [
+        confirmedRecord,
+        ...current.filter(
+          (item) =>
+            normalizeGuid(item.axm365_eventcoachattendanceid) !==
+            normalizedAttendanceId
+        ),
+      ];
+      writeCoachAttendanceCache(
+        dataverseOrgUrlRef.current,
+        normalizedCoachId,
+        next
+      );
+      return next;
+    });
+
+    lastFetchedRef.current.coachAttendances = Date.now();
+    resourceHasUsableDataRef.current.coachAttendances = true;
+    setResourceErrors((current) => {
+      if (!current.coachAttendances) return current;
+      const next = { ...current };
+      delete next.coachAttendances;
+      return next;
+    });
+    setResourceStatus((current) => ({
+      ...current,
+      coachAttendances: "ready",
+    }));
+  }, [coachId, coachName]);
+
+
+  // ---------------------------------------------------------
   // REFRESH INVOICES
   // ---------------------------------------------------------
 
@@ -1453,6 +1719,49 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [coachId, coachLookupLoading, refreshTasks]);
 
 
+  useEffect(() => {
+    if (coachId) {
+      const normalizedCoachId = normalizeGuid(coachId);
+      activeCoachIdRef.current = normalizedCoachId;
+      delete lastFetchedRef.current.coachAttendances;
+      pendingCoachClockInsRef.current.clear();
+
+      const cached = readCoachAttendanceCache(
+        dataverseOrgUrlRef.current,
+        normalizedCoachId
+      );
+      resourceHasUsableDataRef.current.coachAttendances = cached !== null;
+      setCoachAttendances(cached?.attendances ?? []);
+      setResourceErrors((current) => {
+        if (!current.coachAttendances) return current;
+        const next = { ...current };
+        delete next.coachAttendances;
+        return next;
+      });
+      setResourceStatus((current) => ({
+        ...current,
+        coachAttendances: cached ? "ready" : "idle",
+      }));
+      void refreshCoachAttendances().catch(() => {});
+    } else if (!coachLookupLoading) {
+      activeCoachIdRef.current = null;
+      pendingCoachClockInsRef.current.clear();
+      resourceHasUsableDataRef.current.coachAttendances = true;
+      setCoachAttendances([]);
+      setResourceErrors((current) => {
+        if (!current.coachAttendances) return current;
+        const next = { ...current };
+        delete next.coachAttendances;
+        return next;
+      });
+      setResourceStatus((current) => ({
+        ...current,
+        coachAttendances: "ready",
+      }));
+    }
+  }, [coachId, coachLookupLoading, refreshCoachAttendances]);
+
+
   // Marks Completed in Dataverse, then drops it locally — the list only
   // ever shows active tasks, so there is nothing to reconcile afterward.
   const completeTask = useCallback(async (taskId: string) => {
@@ -1508,6 +1817,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       ["players", refreshPlayers],
       ["events", refreshEvents],
       ["attendances", refreshAttendances],
+      ["coachAttendances", refreshCoachAttendances],
       ["invoices", refreshInvoices],
       ["facilities", refreshFacilities],
       ["performances", refreshPerformances],
@@ -1546,6 +1856,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshPlayers,
     refreshEvents,
     refreshAttendances,
+    refreshCoachAttendances,
     refreshInvoices,
     refreshFacilities,
     refreshPerformances,
@@ -1565,6 +1876,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       players: refreshPlayers,
       events: refreshEvents,
       attendances: refreshAttendances,
+      coachAttendances: refreshCoachAttendances,
       invoices: refreshInvoices,
       facilities: refreshFacilities,
       performances: refreshPerformances,
@@ -1608,6 +1920,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshPlayers,
     refreshEvents,
     refreshAttendances,
+    refreshCoachAttendances,
     refreshInvoices,
     refreshFacilities,
     refreshPerformances,
@@ -1729,6 +2042,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             players: "idle",
             events: "idle",
             attendances: "idle",
+            coachAttendances: current.coachAttendances,
             invoices: "idle",
             facilities: "idle",
             performances: "idle",
@@ -1736,9 +2050,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             generationsToCoaches: "idle",
             tasks: current.tasks,
           }));
-          setResourceErrors((current) =>
-            current.tasks ? { tasks: current.tasks } : {}
-          );
+          setResourceErrors((current) => ({
+            ...(current.coachAttendances
+              ? { coachAttendances: current.coachAttendances }
+              : {}),
+            ...(current.tasks ? { tasks: current.tasks } : {}),
+          }));
         }
 
         try {
@@ -1865,31 +2182,41 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const clearResolvedCoach = useCallback(() => {
     clearBackgroundRetry("tasks");
+    clearBackgroundRetry("coachAttendances");
     backgroundRetryAttemptsRef.current.tasks = 0;
+    backgroundRetryAttemptsRef.current.coachAttendances = 0;
     activeCoachIdRef.current = null;
+    pendingCoachClockInsRef.current.clear();
     setCoachId(null);
     setLoggedInCoachId(null);
     resourceHasUsableDataRef.current.tasks = false;
+    resourceHasUsableDataRef.current.coachAttendances = false;
     delete lastFetchedRef.current.tasks;
+    delete lastFetchedRef.current.coachAttendances;
     setTasks([]);
+    setCoachAttendances([]);
     setTasksError(null);
     setTasksLoading(true);
     setResourceErrors((current) => {
-      if (!current.tasks) return current;
+      if (!current.tasks && !current.coachAttendances) return current;
       const next = { ...current };
       delete next.tasks;
+      delete next.coachAttendances;
       return next;
     });
     setResourceStatus((current) => ({
       ...current,
       tasks: "idle",
+      coachAttendances: "idle",
     }));
   }, [clearBackgroundRetry]);
 
   const refreshCoach = useCallback(async () => {
 
     clearBackgroundRetry("tasks");
+    clearBackgroundRetry("coachAttendances");
     backgroundRetryAttemptsRef.current.tasks = 0;
+    backgroundRetryAttemptsRef.current.coachAttendances = 0;
     setError(null);
     const hadUsableCoach = Boolean(activeCoachIdRef.current);
     setCoachLookupLoading(!hadUsableCoach);
@@ -2261,6 +2588,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         attendances,
 
+        coachAttendances,
+
         invoices,
 
         facilities,
@@ -2297,6 +2626,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         refreshAttendances,
 
+        refreshCoachAttendances,
+
         refreshInvoices,
 
         refreshFacilities,
@@ -2310,6 +2641,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshCoach,
 
         refreshTasks,
+
+        recordCoachClockIn,
 
         ensureFresh,
 

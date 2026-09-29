@@ -1,5 +1,6 @@
 export { HomeScreen } from "./HomeScreen";
 export { AttendanceScreen } from "./AttendanceScreen";
+export { CoachAttendanceHistoryScreen } from "./CoachAttendanceHistoryScreen";
 export { PerformanceScreen } from "./PerformanceScreen";
 export { InvoicesScreen } from "./InvoicesScreen";
 export { CalendarScreen } from "./CalendarScreen";

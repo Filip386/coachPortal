@@ -1,12 +1,13 @@
 
-import React, { useEffect } from "react";
-import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight } from "lucide-react";
+import React, { useEffect, useMemo } from "react";
+import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Check, X } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, SectionTitle, ActionTile, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
 import { useData, type DataResourceStatus } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
+import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
@@ -16,13 +17,19 @@ const hasUsableData = (status: DataResourceStatus): boolean =>
   status === "ready" || status === "refreshing" || status === "stale";
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, refreshAll, ensureFresh, resourceStatus, hasStaleResources, getResourceError } = useData();
+  const { coachName, coachId, players, events, coachAttendances, invoices, tasks, refreshAll, ensureFresh, resourceStatus, hasStaleResources, getResourceError } = useData();
   const firstName = coachName ? coachName.split(" ")[0] : null;
   const homeError = getResourceError(["players", "events", "invoices"]);
-  const homeStale = hasStaleResources(["players", "events", "invoices"]);
+  const homeStale = hasStaleResources(["players", "events", "invoices", "coachAttendances"]);
+  const attendanceError = getResourceError(["coachAttendances"]);
   const playersAvailable = hasUsableData(resourceStatus.players);
   const eventsAvailable = hasUsableData(resourceStatus.events);
   const invoicesAvailable = hasUsableData(resourceStatus.invoices);
+  const coachAttendancesAvailable = hasUsableData(
+    resourceStatus.coachAttendances
+  );
+  const attendanceHistoryAvailable =
+    Boolean(coachId) && eventsAvailable && coachAttendancesAvailable;
   const eventsLoading =
     resourceStatus.events === "idle" || resourceStatus.events === "loading";
 
@@ -30,7 +37,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
   // remains mounted for two seconds, revalidate the remaining stale resources
   // in the background. Navigating away cancels only the second stage.
   useEffect(() => {
-    void ensureFresh(["players", "events", "invoices"]);
+    void ensureFresh(["players", "events", "coachAttendances", "invoices"]);
 
     const timer = window.setTimeout(() => {
       void ensureFresh([
@@ -61,6 +68,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
     .filter((e) => e.axm365_eventdate && new Date(e.axm365_eventdate) >= now)
     .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime())
     .slice(0, 3);
+
+  const recentCoachAttendance = useMemo(
+    () =>
+      attendanceHistoryAvailable
+        ? buildCoachAttendanceHistory(events, coachAttendances, coachId)
+            .slice(0, 15)
+            .reverse()
+        : [],
+    [attendanceHistoryAvailable, coachAttendances, coachId, events]
+  );
 
   return (
     <>
@@ -140,6 +157,98 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
               warn={invoicesAvailable && overdueInvoices.length > 0}
             />
           </div>
+
+          <button
+            onClick={() => go("coach-attendance")}
+            aria-label="Open my attendance history"
+            style={{
+              width: "100%",
+              marginTop: 20,
+              padding: "12px 13px",
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.13)",
+              background: "rgba(255,255,255,0.07)",
+              color: "#fff",
+              textAlign: "left",
+              cursor: "pointer",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: monoStack,
+                  fontSize: 9.5,
+                  letterSpacing: "0.16em",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                  opacity: 0.78,
+                }}
+              >
+                My attendance · Last 15
+              </span>
+              <ChevronRight size={14} strokeWidth={2.2} />
+            </div>
+
+            {attendanceHistoryAvailable && recentCoachAttendance.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  marginTop: 10,
+                }}
+              >
+                {recentCoachAttendance.map(({ event, status }) => {
+                  const present = status === "present";
+                  const DotIcon = present ? Check : X;
+                  return (
+                    <span
+                      key={event.axm365_eventid}
+                      title={`${event.axm365_name || "Event"}: ${
+                        present ? "Present" : "Absent"
+                      }`}
+                      style={{
+                        width: 16,
+                        height: 16,
+                        flexShrink: 0,
+                        borderRadius: "50%",
+                        background: present ? COLORS.green : COLORS.red,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                      }}
+                    >
+                      <DotIcon size={10} strokeWidth={3.2} />
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  opacity: 0.72,
+                }}
+              >
+                {attendanceError
+                  ? "Attendance unavailable · Tap for details"
+                  : attendanceHistoryAvailable
+                  ? "No past events assigned yet"
+                  : "Loading attendance…"}
+              </div>
+            )}
+          </button>
         </div>
       </div>
 

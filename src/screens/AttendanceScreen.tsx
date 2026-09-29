@@ -42,6 +42,9 @@ type AttendanceMark = "present" | "late" | "absent";
 
 const CLOCK_STORAGE_KEY = "coach_clock_session";
 
+const normalizeGuid = (value?: string | null): string =>
+  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+
 const RATING_DEFAULTS: Record<number, number> = {
   1: 10,
   2: 30,
@@ -76,6 +79,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     players,
     events,
     attendances,
+    coachAttendances,
     performances,
     coachName,
     coachId,
@@ -83,6 +87,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     coachLookupError,
     isBackOffice,
     refreshAttendances,
+    refreshCoachAttendances,
     refreshPerformances,
     allGenerations,
     generationsToCoaches,
@@ -91,8 +96,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     hasResourceErrors,
     hasStaleResources,
     getResourceError,
+    resourceStatus,
     runDataverseRead,
     runDataverseWrite,
+    recordCoachClockIn,
   } = useData();
 
   const screenLoading = isLoadingResources([
@@ -165,11 +172,33 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   // This tells us WHICH EVENT the current clock session belongs to.
   const [clockedInEventId, setClockedInEventId] = useState<string | null>(null);
 
+  const persistedClockIn = useMemo(() => {
+    const normalizedCoachId = normalizeGuid(coachId);
+    const normalizedEventId = normalizeGuid(selectedEventId);
+    if (!normalizedCoachId || !normalizedEventId) return null;
+
+    return (
+      coachAttendances.find(
+        (record) =>
+          normalizeGuid(record._axm365_coach_value) === normalizedCoachId &&
+          normalizeGuid(record._axm365_event_value) === normalizedEventId &&
+          Boolean(record.axm365_clockin)
+      ) ?? null
+    );
+  }, [coachAttendances, coachId, selectedEventId]);
+
+  const coachAttendanceResolved =
+    resourceStatus.coachAttendances === "ready" ||
+    resourceStatus.coachAttendances === "refreshing" ||
+    resourceStatus.coachAttendances === "stale";
+  const coachAttendanceLoadError = getResourceError(["coachAttendances"]);
+
   // IMPORTANT:
   // This is calculated outside the useMemo because it is used
   // throughout the JSX.
   const isCurrentEventClockedIn =
-    clockedIn && !!clockedInEventId && clockedInEventId === selectedEventId;
+    Boolean(persistedClockIn) ||
+    (clockedIn && !!clockedInEventId && clockedInEventId === selectedEventId);
 
   // ============================================================
   // ROLE-BASED EDIT LOCK
@@ -384,6 +413,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       "players",
       "events",
       "attendances",
+      "coachAttendances",
       "performances",
       "generations",
       "generationsToCoaches",
@@ -751,6 +781,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
+    if (!coachAttendanceResolved) {
+      setClockError(
+        coachAttendanceLoadError ??
+          "Still checking whether this event already has a clock-in. Please wait a moment and try again."
+      );
+      void ensureFresh(["coachAttendances"], { force: true });
+      return;
+    }
+
     // Already clocked in for this event — there is no clock-out action,
     // so this is a no-op (the button is also disabled in this state).
     if (isCurrentEventClockedIn) {
@@ -781,6 +820,50 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     try {
       // ========================================================
+      // CHECK FOR AN EXISTING CLOCK IN
+      //
+      // Local storage is only a convenience and may have been cleared. A
+      // final table lookup prevents a second row when this coach already
+      // clocked in to the selected Event on another device/session.
+      // ========================================================
+
+      const existingLookup = await runDataverseRead(
+        "Checking existing clock in",
+        () =>
+          Axm365_eventcoachattendancesService.getAll({
+            filter: `statecode eq 0 and _axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+            orderBy: ["createdon desc"],
+          })
+      );
+
+      throwIfError(existingLookup, "Checking existing Clock In");
+
+      const existingClockIn = (unwrap<any>(existingLookup) ?? []).find(
+        (row: any) => Boolean(row?.axm365_clockin)
+      );
+
+      if (existingClockIn?.axm365_eventcoachattendanceid) {
+        const existingId = existingClockIn.axm365_eventcoachattendanceid as string;
+        const existingTime = String(existingClockIn.axm365_clockin);
+
+        setCoachAttendanceId(existingId);
+        setClockedInEventId(selectedEventId);
+        setClockedIn(true);
+        recordCoachClockIn(selectedEventId, existingId, existingTime);
+        localStorage.setItem(
+          CLOCK_STORAGE_KEY,
+          JSON.stringify({
+            clockedIn: true,
+            coachAttendanceId: existingId,
+            clockStartTime: new Date(existingTime).getTime(),
+            eventId: selectedEventId,
+            coachId,
+          })
+        );
+        return;
+      }
+
+      // ========================================================
       // CLOCK IN
       // ========================================================
 
@@ -789,6 +872,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         eventId: selectedEventId,
       });
 
+      const clockInAt = new Date();
+
       const res = await runDataverseWrite(
         "Clocking in",
         () => Axm365_eventcoachattendancesService.create({
@@ -796,7 +881,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             coachName ?? "Coach"
           } - ${new Date().toLocaleDateString()}`,
 
-          axm365_clockin: new Date(),
+          axm365_clockin: clockInAt,
 
           // USE coachId
           "axm365_Coach@odata.bind": `/cr9be_coachs(${coachId})`,
@@ -847,7 +932,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         const lookup = await runDataverseRead(
           "Confirming clock in",
           () => Axm365_eventcoachattendancesService.getAll({
-            filter: `_axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+            filter: `statecode eq 0 and _axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
           })
         );
 
@@ -898,6 +983,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           coachId: coachId,
         })
       );
+
+      // The create is confirmed at this point. Update the Coach-scoped cache
+      // immediately so Home/history cannot briefly mark this Event Absent,
+      // then reconcile with Dataverse through the shared mobile-safe queue.
+      recordCoachClockIn(
+        selectedEventId,
+        createdId,
+        clockInAt.toISOString()
+      );
+      void refreshCoachAttendances().catch(() => {});
 
       console.log("[Clock] Clock IN completed:", {
         attendanceId: createdId,
@@ -1220,12 +1315,19 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               ) : (
                 <button
                   onClick={handleClockInOut}
-                  disabled={clockSaving || locked || coachLookupLoading}
+                  disabled={
+                    clockSaving ||
+                    locked ||
+                    coachLookupLoading ||
+                    !coachAttendanceResolved
+                  }
                   title={
                     locked
                       ? LOCKED_MESSAGE
                       : coachLookupLoading
                       ? "Still loading your coach profile — the button will enable automatically."
+                      : !coachAttendanceResolved
+                      ? "Checking existing clock-in records — the button will enable automatically."
                       : undefined
                   }
                   style={{
@@ -1252,13 +1354,16 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     letterSpacing: "0.13em",
 
                     cursor:
-                      clockSaving || locked || coachLookupLoading
+                      clockSaving ||
+                      locked ||
+                      coachLookupLoading ||
+                      !coachAttendanceResolved
                         ? "not-allowed"
                         : "pointer",
 
                     opacity: clockSaving
                       ? 0.65
-                      : locked || coachLookupLoading
+                      : locked || coachLookupLoading || !coachAttendanceResolved
                       ? 0.45
                       : 1,
 
@@ -1287,6 +1392,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     ? "SAVING..."
                     : coachLookupLoading
                     ? "LOADING PROFILE..."
+                    : !coachAttendanceResolved
+                    ? "CHECKING CLOCK IN..."
                     : "CLOCK IN"}
                 </button>
               )}
@@ -1380,6 +1487,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       )}
 
       {screenStale && <StaleDataNotice />}
+
+      {coachAttendanceLoadError && (
+        <ErrorBanner
+          message={coachAttendanceLoadError}
+          onRetry={() => void refreshCoachAttendances().catch(() => {})}
+        />
+      )}
 
       {writeError && (
         <ErrorBanner message={writeError} onRetry={saveAttendance} />
