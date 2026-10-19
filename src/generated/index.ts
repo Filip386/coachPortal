@@ -17,6 +17,7 @@ export * as Cr9be_playersModel from './models/Cr9be_playersModel';
 export * as EquipmentsModel from './models/EquipmentsModel';
 export * as InvoicesModel from './models/InvoicesModel';
 export * as MicrosoftDataverseModel from './models/MicrosoftDataverseModel';
+export * as TasksModel from './models/TasksModel';
 
 // Services
 export * from './services/Axm365_eventattendancesService';
@@ -31,3 +32,4 @@ export * from './services/Cr9be_playersService';
 export * from './services/EquipmentsService';
 export * from './services/InvoicesService';
 export * from './services/MicrosoftDataverseService';
+export * from './services/TasksService';

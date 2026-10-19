@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { RefreshCw, ChevronDown, User, Search } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { PillStat } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
@@ -34,11 +34,19 @@ const invoiceContact = (inv: any): { key: string; name: string } => {
 };
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
-  const { invoices, loading, error, refreshInvoices } = useData();
+  const { invoices, refreshInvoices, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const screenLoading = isLoadingResources(["invoices"]);
+  const screenLoadError = hasResourceErrors(["invoices"]);
+  const screenError = getResourceError(["invoices"]);
+  const screenStale = hasStaleResources(["invoices"]);
   const [selectedContactKey, setSelectedContactKey] = useState<string>("all");
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void ensureFresh(["invoices"]);
+  }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);
@@ -115,10 +123,11 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
         }
       />
 
-      {loading && invoices.length === 0 && <LoadingSpinner label="Loading invoices…" />}
-      {error && invoices.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
+      {screenLoading && <LoadingSpinner label="Loading invoices…" />}
+      {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
+      {screenStale && <StaleDataNotice />}
 
-      {(!loading || invoices.length > 0) && (
+      {!screenLoading && !screenLoadError && (
         <>
           <div style={{ padding: "0 22px" }}>
             <div style={{ background: COLORS.navy, color: "#fff", borderRadius: 22, padding: 20, position: "relative", overflow: "hidden" }}>

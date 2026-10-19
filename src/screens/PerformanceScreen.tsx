@@ -1,13 +1,13 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown, User, Phone } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar } from "../components/shared";
+import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
 import { AttributeBar, AttributeSlider } from "../components/ui";
-import { useData } from "../context/DataContext";
+import { useData, type GuardianContactDetails } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
@@ -23,6 +23,14 @@ const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
   return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
 };
 
+const normalizeGuid = (value?: string | null): string =>
+  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+
+const sameGuid = (left?: string | null, right?: string | null): boolean => {
+  const normalizedLeft = normalizeGuid(left);
+  return Boolean(normalizedLeft) && normalizedLeft === normalizeGuid(right);
+};
+
 interface PerformanceScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
@@ -31,11 +39,30 @@ interface PerformanceScreenProps {
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
-  const { players, performances, events, loading, error, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, guardianContacts } = useData();
+  const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  // Only the Player table blocks the visible screen. The other resources keep
+  // loading in the background, so cached Players and their guardian details
+  // remain visible while Coach/Generation mapping is still resolving.
+  const screenLoading = isLoadingResources(["players"]);
+  const screenLoadError = hasResourceErrors(["players"]);
+  const screenError = getResourceError([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
+  const screenStale = hasStaleResources([
+    "players",
+    "events",
+    "performances",
+    "generations",
+    "generationsToCoaches",
+  ]);
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
-  const [genAutoSelected, setGenAutoSelected] = useState(false);
+  const autoSelectedCoachRef = React.useRef<string | null>(null);
   const [search, setSearch] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -64,53 +91,164 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [playerSaveSuccess, setPlayerSaveSuccess] = useState(false);
   const [playerSaveError, setPlayerSaveError] = useState<string | null>(null);
 
+  useEffect(() => {
+    // Players are the critical first stage: they identify the selected
+    // guardian. Starting every Performance read here used to put the Contact
+    // lookup at the back of the mobile-safe Dataverse queue.
+    if (players.length === 0) void ensureFresh(["players"]);
+  }, [ensureFresh, players.length]);
+
   const generationTabs = useMemo(() => {
-    const seen = new Set<string>();
-    const result: { id: string; name: string }[] = [];
+    const sortGenerations = (items: { id: string; name: string }[]) => {
+      const yearOf = (name: string) => {
+        const match = name.match(/\d{4}/) || name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : Infinity;
+      };
+      return items.sort((left, right) => {
+        const leftYear = yearOf(left.name);
+        const rightYear = yearOf(right.name);
+        return leftYear !== rightYear
+          ? leftYear - rightYear
+          : left.name.localeCompare(right.name);
+      });
+    };
 
-    const coachPlayers = coachId
-      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
-      : [];
-    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
-
-    sourcePlayers.forEach((p) => {
-      const id = (p as any)._cr9be_generation_value as string | undefined;
-      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
-      if (id && name && !seen.has(id)) {
-        seen.add(id);
-        result.push({ id, name });
-      }
-    });
-
-    generationsToCoaches
-      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
-      .forEach((gtc) => {
-        const id = (gtc as any)._axm365_generation_value as string | undefined;
-        const name = gtc.axm365_generationname;
-        if (id && name && !seen.has(id)) {
-          seen.add(id);
+    const collectPlayerGenerations = () => {
+      const seen = new Set<string>();
+      const result: { id: string; name: string }[] = [];
+      players.forEach((player) => {
+        const id = (player as any)._cr9be_generation_value as string | undefined;
+        const name =
+          player.cr9be_generationname || lookupName(player, "cr9be_generation");
+        const normalizedId = normalizeGuid(id);
+        if (id && name && normalizedId && !seen.has(normalizedId)) {
+          seen.add(normalizedId);
           result.push({ id, name });
         }
       });
+      return result;
+    };
 
-    const yearOf = (s: string) => { const m = s.match(/\d{4}/) || s.match(/\d+/); return m ? parseInt(m[0], 10) : Infinity; };
-    return result.sort((a, b) => { const ya = yearOf(a.name), yb = yearOf(b.name); return ya !== yb ? ya - yb : a.name.localeCompare(b.name); });
-  }, [coachId, players, generationsToCoaches]);
+    const playerGenerations = collectPlayerGenerations();
+    if (!coachId) return sortGenerations(playerGenerations);
+
+    const seen = new Set<string>();
+    const related: { id: string; name: string }[] = [];
+    const addRelatedGeneration = (id?: string, name?: string | null) => {
+      const normalizedId = normalizeGuid(id);
+      if (!id || !name || !normalizedId || seen.has(normalizedId)) return;
+      seen.add(normalizedId);
+      related.push({ id, name });
+    };
+
+    players
+      .filter((player) => sameGuid((player as any)._cr9be_coach_value, coachId))
+      .forEach((player) => {
+        addRelatedGeneration(
+          (player as any)._cr9be_generation_value as string | undefined,
+          player.cr9be_generationname || lookupName(player, "cr9be_generation")
+        );
+      });
+
+    allGenerations
+      .filter((generation) =>
+        sameGuid((generation as any)._cr9be_coach_value, coachId)
+      )
+      .forEach((generation) => {
+        addRelatedGeneration(
+          generation.axm365_generationid,
+          generation.axm365_name
+        );
+      });
+
+    generationsToCoaches
+      .filter((mapping) =>
+        sameGuid((mapping as any)._axm365_coach_value, coachId)
+      )
+      .forEach((mapping) => {
+        addRelatedGeneration(
+          (mapping as any)._axm365_generation_value as string | undefined,
+          mapping.axm365_generationname
+        );
+      });
+
+    // Never expose a generation filter that produces an empty Player list.
+    // If cached relationship tables disagree with cached Players, fall back to
+    // the generations actually present on those Players until refresh repairs it.
+    const relatedWithPlayers = related.filter((generation) =>
+      players.some((player) =>
+        sameGuid((player as any)._cr9be_generation_value, generation.id)
+      )
+    );
+
+    return sortGenerations(
+      relatedWithPlayers.length > 0 ? relatedWithPlayers : playerGenerations
+    );
+  }, [coachId, players, allGenerations, generationsToCoaches]);
+
+  const coachPlayers = useMemo(() => {
+    if (!coachId || generationTabs.length === 0) return players;
+    const filtered = players.filter((player) =>
+      generationTabs.some((generation) =>
+        sameGuid(
+          (player as any)._cr9be_generation_value,
+          generation.id
+        )
+      )
+    );
+    return filtered.length > 0 ? filtered : players;
+  }, [coachId, generationTabs, players]);
 
   const primaryGenId = useMemo(() => {
-    if (!coachId) return generationTabs[0]?.id ?? null;
-    const fromTable = allGenerations.find((g) => (g as any)._cr9be_coach_value === coachId);
-    return fromTable?.axm365_generationid ?? generationTabs[0]?.id ?? null;
-  }, [coachId, allGenerations, generationTabs]);
+    if (!coachId) return null;
+
+    const primaryGeneration = allGenerations.find((generation) =>
+      sameGuid((generation as any)._cr9be_coach_value, coachId)
+    );
+    const primaryTab = generationTabs.find((generation) =>
+      sameGuid(generation.id, primaryGeneration?.axm365_generationid)
+    );
+    const candidates = [
+      primaryTab?.id,
+      ...generationTabs.map((generation) => generation.id),
+    ];
+
+    return candidates.find(
+      (candidate): candidate is string =>
+        Boolean(candidate) &&
+        players.some((player) =>
+          sameGuid((player as any)._cr9be_generation_value, candidate)
+        )
+    ) ?? null;
+  }, [coachId, allGenerations, generationTabs, players]);
 
   useEffect(() => {
-    if (primaryGenId && !genAutoSelected) {
-      setSelectedGenId(primaryGenId);
-      setGenAutoSelected(true);
-      const first = players.filter((p) => (p as any)._cr9be_generation_value === primaryGenId)[0];
-      if (first) setSelectedId(first.cr9be_playerid);
+    const normalizedCoachId = normalizeGuid(coachId);
+
+    if (!normalizedCoachId) {
+      autoSelectedCoachRef.current = null;
+      setSelectedGenId("all");
+      return;
     }
-  }, [primaryGenId, genAutoSelected, players]);
+
+    if (
+      autoSelectedCoachRef.current === normalizedCoachId ||
+      selectedPlayerId ||
+      !primaryGenId
+    ) {
+      return;
+    }
+
+    const first = players.find((p) =>
+      sameGuid((p as any)._cr9be_generation_value, primaryGenId)
+    );
+
+    if (first) {
+      setSelectedGenId(primaryGenId);
+      setSelectedId(first.cr9be_playerid);
+      autoSelectedCoachRef.current = normalizedCoachId;
+    }
+  }, [coachId, primaryGenId, players, selectedPlayerId]);
 
   useEffect(() => {
     if (!selectedPlayerId) return;
@@ -120,27 +258,196 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     if (genId) setSelectedGenId(genId);
   }, [selectedPlayerId, players]);
 
-  useEffect(() => {
-    if (!selectedId && players.length > 0) setSelectedId(players[0].cr9be_playerid);
-  }, [players, selectedId]);
-
   const playersInGen = useMemo(
-    () => selectedGenId === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === selectedGenId),
-    [players, selectedGenId]
+    () => selectedGenId === "all"
+      ? coachPlayers
+      : coachPlayers.filter((p) =>
+          sameGuid((p as any)._cr9be_generation_value, selectedGenId)
+        ),
+    [coachPlayers, selectedGenId]
   );
+
+  useEffect(() => {
+    if (playersInGen.length === 0) {
+      if (selectedId) setSelectedId(null);
+      return;
+    }
+
+    const selectedIsVisible = playersInGen.some((candidate) =>
+      sameGuid(candidate.cr9be_playerid, selectedId)
+    );
+    if (!selectedIsVisible) {
+      setSelectedId(playersInGen[0].cr9be_playerid);
+    }
+  }, [playersInGen, selectedId]);
 
   const filteredPlayers = search
     ? playersInGen.filter((p) => (p.cr9be_name || "").toLowerCase().includes(search.toLowerCase()))
     : playersInGen;
 
-  const player = players.find((p) => p.cr9be_playerid === selectedId);
+  const player = playersInGen.find((p) => sameGuid(p.cr9be_playerid, selectedId));
   const playerName = player ? (player.cr9be_name || "Player") : "Player";
   const playerPos = lookupName(player, "cr9be_position");
   const playerNum = player ? (player.cr9be_number ?? "?") : "?";
   const initials = playerName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
-  const guardianContact = player?._cr9be_member_value ? guardianContacts[player._cr9be_member_value] : undefined;
-  const guardianName = guardianContact?.name ?? null;
-  const guardianPhone = guardianContact?.phone ?? null;
+
+  // Guardian details come from the related Contact so they reflect current
+  // Contact values rather than a potentially stale lookup-name annotation.
+  const guardianId = (player as any)?._cr9be_member_value as string | undefined;
+  const guardianLookupName = lookupName(player, "cr9be_member") || null;
+  const [guardianContact, setGuardianContact] = useState<GuardianContactDetails | null>(null);
+  const [guardianLoading, setGuardianLoading] = useState(false);
+  const [guardianPhoneLoading, setGuardianPhoneLoading] = useState(false);
+  const [guardianError, setGuardianError] = useState<string | null>(null);
+  const [guardianRetryToken, setGuardianRetryToken] = useState(0);
+  const guardianRequestVersionRef = React.useRef(0);
+  const guardianRetryTimerRef = React.useRef<number | null>(null);
+  const guardianRetryAttemptRef = React.useRef(0);
+
+  const clearGuardianRetry = useCallback(() => {
+    if (guardianRetryTimerRef.current !== null) {
+      window.clearTimeout(guardianRetryTimerRef.current);
+      guardianRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleGuardianRetry = useCallback(() => {
+    if (guardianRetryTimerRef.current !== null) return;
+
+    const delays = [5_000, 15_000, 45_000] as const;
+    const delay = delays[guardianRetryAttemptRef.current];
+    if (delay === undefined) return;
+
+    guardianRetryAttemptRef.current += 1;
+    guardianRetryTimerRef.current = window.setTimeout(() => {
+      guardianRetryTimerRef.current = null;
+      setGuardianRetryToken((current) => current + 1);
+    }, delay);
+  }, []);
+
+  const loadGuardian = useCallback(
+    async (
+      id: string,
+      force = false,
+      fallbackName: string | null = null
+    ): Promise<void> => {
+      const requestVersion = ++guardianRequestVersionRef.current;
+      const cached = getCachedGuardianContact(id);
+
+      if (cached) {
+        // Stale-while-revalidate: never replace usable guardian details with
+        // a loading state. A stale value stays visible while Dataverse refreshes.
+        setGuardianContact(cached.details);
+        setGuardianError(null);
+        setGuardianLoading(false);
+        // A cache hit is immediately usable, including a confirmed null phone.
+        // Stale values stay visible while they are refreshed in background.
+        setGuardianPhoneLoading(false);
+
+        if (cached.isFresh && !force) return;
+      } else if (fallbackName) {
+        // On the first-ever load there is no Contact cache yet, but the Player
+        // row normally carries the lookup's formatted name. Show that at once
+        // and fill in the phone number when the Contact request succeeds.
+        setGuardianContact({ name: fallbackName, phone: null });
+        setGuardianError(null);
+        setGuardianLoading(false);
+        setGuardianPhoneLoading(true);
+      } else {
+        setGuardianContact(null);
+        setGuardianError(null);
+        setGuardianLoading(true);
+        setGuardianPhoneLoading(false);
+      }
+
+      try {
+        const details = await getGuardianContact(id, {
+          force,
+        });
+        if (guardianRequestVersionRef.current !== requestVersion) return;
+        setGuardianContact(details);
+        setGuardianError(null);
+        setGuardianPhoneLoading(false);
+        guardianRetryAttemptRef.current = 0;
+        clearGuardianRetry();
+      } catch (err) {
+        if (guardianRequestVersionRef.current !== requestVersion) return;
+        // A background refresh failure must not hide saved guardian details.
+        // Only a first load with no cache needs an actionable error.
+        if (!cached && !fallbackName) {
+          setGuardianContact(null);
+          setGuardianError(
+            err instanceof Error ? err.message : "Failed to load guardian details"
+          );
+        } else {
+          // Keep the usable name/card on screen. The shared read already did
+          // its short mobile retries; schedule slower follow-up attempts
+          // without turning this into a blocking screen error.
+          scheduleGuardianRetry();
+        }
+        setGuardianPhoneLoading(false);
+      } finally {
+        if (guardianRequestVersionRef.current === requestVersion) {
+          setGuardianLoading(false);
+        }
+      }
+    },
+    [clearGuardianRetry, getCachedGuardianContact, getGuardianContact, scheduleGuardianRetry]
+  );
+
+  useEffect(() => {
+    guardianRetryAttemptRef.current = 0;
+    clearGuardianRetry();
+
+    return clearGuardianRetry;
+  }, [guardianId, clearGuardianRetry]);
+
+  useEffect(() => {
+    if (!guardianId) {
+      guardianRequestVersionRef.current += 1;
+      setGuardianContact(null);
+      setGuardianError(null);
+      setGuardianLoading(false);
+      setGuardianPhoneLoading(false);
+      return;
+    }
+
+    // Contact retrieval is independent of Coach/account-cache readiness.
+    // DataContext uses a scoped cache when available and otherwise performs
+    // the same live Contact read without blocking this card.
+    void loadGuardian(
+      guardianId,
+      guardianRetryAttemptRef.current > 0,
+      guardianLookupName
+    );
+
+    // The Dataverse call cannot be cancelled, but invalidating this request
+    // prevents an older player's response from updating the current player.
+    return () => {
+      guardianRequestVersionRef.current += 1;
+    };
+  }, [guardianId, guardianLookupName, guardianRetryToken, loadGuardian]);
+
+  useEffect(() => {
+    if (players.length === 0) return;
+    // Give the selected guardian effect above one render turn to enter the
+    // serialized queue first. It no longer waits for account/cache scope.
+    // The remaining screen data then follows without creating concurrent
+    // Dataverse bridge calls.
+    const timer = window.setTimeout(() => {
+      // These reads remain non-blocking for the visible cached Player card,
+      // but Performance now refreshes its own Generation mappings again.
+      void ensureFresh([
+        "players",
+        "events",
+        "performances",
+        "generations",
+        "generationsToCoaches",
+      ]);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [ensureFresh, players.length]);
 
   // Memoized on [performances, selectedId] so the array reference is stable across
   // re-renders — otherwise the Edit Mode prefill effect below (which depends on
@@ -257,17 +564,20 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       const ratingCode = 693080000 + (editRating - 1);
       // Always creates a new record — never overwrites a prior one — so the full
       // performance history is preserved for the "most recent" display.
-      const res = await Axm365_playereventperformancesService.create({
-        axm365_performancename: `${playerName} - ${selectedEvent?.axm365_name ?? "General"}`,
-        axm365_raiting: ratingCode as any,
-        axm365_technique: editTechnique,
-        axm365_effort: editEffort,
-        axm365_tacticalawareness: editTactical,
-        axm365_teamplay: editTeamPlay,
-        axm365_notes: editNotes,
-        "axm365_cr9be_Player@odata.bind": `/cr9be_players(${selectedId})`,
-        ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
-      } as any);
+      const res = await runDataverseWrite(
+        "Creating player performance",
+        () => Axm365_playereventperformancesService.create({
+          axm365_performancename: `${playerName} - ${selectedEvent?.axm365_name ?? "General"}`,
+          axm365_raiting: ratingCode as any,
+          axm365_technique: editTechnique,
+          axm365_effort: editEffort,
+          axm365_tacticalawareness: editTactical,
+          axm365_teamplay: editTeamPlay,
+          axm365_notes: editNotes,
+          "axm365_cr9be_Player@odata.bind": `/cr9be_players(${selectedId})`,
+          ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
+        } as any)
+      );
       if (!res.success) throw new Error((res.error as any)?.message ?? JSON.stringify(res.error) ?? "Create failed");
       await refreshPerformances().catch(() => {});
       setPerfSaveSuccess(true);
@@ -326,7 +636,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         changes.cr9be_number = numValue;
       }
       if (editPlayerPositionId) changes["cr9be_Position@odata.bind"] = `/cr9be_positions(${editPlayerPositionId})`;
-      const res = await Cr9be_playersService.update(player.cr9be_playerid, changes as any);
+      const res = await runDataverseWrite(
+        "Updating player",
+        () => Cr9be_playersService.update(player.cr9be_playerid, changes as any)
+      );
       if (!res.success) throw new Error((res.error as any)?.message ?? "Update failed");
       await refreshPlayers().catch(() => {});
       setPlayerSaveSuccess(true);
@@ -346,23 +659,40 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       <StatusBar />
       <ScreenHeader kicker="Player Stats" title="Performance" onBack={() => (goBack ? goBack() : go("home"))} />
 
-      {loading && players.length === 0 && <LoadingSpinner label="Loading players…" />}
-      {error && players.length === 0 && <ErrorBanner message={error} onRetry={() => refreshPlayers().catch(() => {})} />}
+      {screenLoading && <LoadingSpinner label="Loading players…" />}
+      {screenError && (
+        <ErrorBanner
+          message={screenError}
+          onRetry={() =>
+            void ensureFresh(
+              ["players", "events", "performances", "generations", "generationsToCoaches"],
+              { force: true }
+            )
+          }
+        />
+      )}
+      {screenStale && <StaleDataNotice />}
 
-      {(!loading || players.length > 0) && players.length > 0 && (
+      {!screenLoading && !screenLoadError && players.length > 0 && (
         <>
           {/* Generation filter */}
           {generationTabs.length > 0 && (
             <div style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
               {[{ id: "all", name: "ALL" }, ...generationTabs].map((tab) => {
-                const active = selectedGenId === tab.id;
+                const active = tab.id === "all"
+                  ? selectedGenId === "all"
+                  : sameGuid(selectedGenId, tab.id);
                 return (
                   <button
                     key={tab.id}
                     ref={(el) => { if (active && el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" }); }}
                     onClick={() => {
                       setSelectedGenId(tab.id);
-                      const first = (tab.id === "all" ? players : players.filter((p) => (p as any)._cr9be_generation_value === tab.id))[0];
+                      const first = (tab.id === "all"
+                        ? coachPlayers
+                        : coachPlayers.filter((p) =>
+                            sameGuid((p as any)._cr9be_generation_value, tab.id)
+                          ))[0];
                       setSelectedId(first?.cr9be_playerid ?? null);
                     }}
                     style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: `1px solid ${active ? COLORS.navy : COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}
@@ -466,28 +796,104 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   </div>
                 </div>
 
-                {(guardianName || guardianPhone) && (
-                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${COLORS.line}`, position: "relative" }}>
-                    <div style={{ fontFamily: monoStack, fontSize: 9, letterSpacing: "0.18em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600, marginBottom: 8 }}>
-                      Guardian
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        <User size={13} color={COLORS.mute} strokeWidth={2} />
-                        <span style={{ fontFamily: fontStack, fontSize: 13, fontWeight: 700, color: COLORS.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {guardianName || "Not on file"}
-                        </span>
+                {guardianId && (
+                  <div style={{ marginTop: 12, position: "relative" }}>
+                    {guardianLoading && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.mute, fontFamily: fontStack }}>
+                        <RefreshCw size={11} style={{ animation: "spin 1s linear infinite" }} />
+                        Loading guardian…
                       </div>
-                      {guardianPhone && (
-                        <a
-                          href={`tel:${guardianPhone}`}
-                          style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: monoStack, fontSize: 12, fontWeight: 700, color: COLORS.navy, textDecoration: "none", flexShrink: 0 }}
+                    )}
+
+                    {!guardianLoading && guardianError && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontFamily: fontStack }}>
+                        <span style={{ color: COLORS.red, fontWeight: 600 }}>Guardian unavailable</span>
+                        <button
+                          onClick={() => void loadGuardian(guardianId, true, guardianLookupName)}
+                          style={{ background: "none", border: 0, padding: 0, color: COLORS.navy, fontWeight: 700, fontSize: 12.5, textDecoration: "underline", cursor: "pointer" }}
                         >
-                          <Phone size={12} strokeWidth={2} />
-                          {guardianPhone}
-                        </a>
-                      )}
-                    </div>
+                          Retry
+                        </button>
+                      </div>
+                    )}
+
+                    {!guardianLoading && !guardianError && guardianContact && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          background: COLORS.cream,
+                          border: `1px solid ${COLORS.line}`,
+                          borderRadius: 14,
+                          padding: "9px 12px",
+                        }}
+                      >
+                        <User size={14} color={COLORS.navy} strokeWidth={2} style={{ flexShrink: 0 }} />
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontFamily: fontStack,
+                            fontWeight: 700,
+                            fontSize: 13,
+                            color: COLORS.navy,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {guardianContact.name || "Unnamed guardian"}
+                        </span>
+                        {guardianPhoneLoading && !guardianContact.phone && (
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontFamily: monoStack,
+                              fontSize: 10.5,
+                              color: COLORS.mute,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <RefreshCw size={10} style={{ animation: "spin 1s linear infinite" }} />
+                            Loading phone…
+                          </span>
+                        )}
+                        {guardianContact.phone && (
+                          <a
+                            href={`tel:${guardianContact.phone}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontFamily: monoStack,
+                              fontWeight: 700,
+                              fontSize: 12.5,
+                              color: COLORS.navy,
+                              textDecoration: "none",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Phone size={12} color={COLORS.navy} strokeWidth={2} />
+                            {guardianContact.phone}
+                          </a>
+                        )}
+                        {!guardianPhoneLoading && !guardianContact.phone && (
+                          <span
+                            style={{
+                              fontFamily: monoStack,
+                              fontSize: 10.5,
+                              color: COLORS.mute,
+                              flexShrink: 0,
+                            }}
+                          >
+                            No phone stored
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -567,7 +973,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         </>
       )}
 
-      {!loading && players.length === 0 && (
+      {!screenLoading && !screenLoadError && players.length === 0 && (
         <div style={{ padding: 40, textAlign: "center", color: COLORS.mute }}>
           No players found. Please add players to your squad first.
         </div>

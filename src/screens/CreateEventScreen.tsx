@@ -31,7 +31,13 @@ const EVENT_TYPES = Object.entries(Axm365_eventsaxm365_eventtype).map(([code, na
 }));
 
 export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack }) => {
-  const { events, facilities: allFacilities, refreshEvents, refreshFacilities } = useData();
+  const {
+    events,
+    facilities: allFacilities,
+    refreshEvents,
+    refreshFacilities,
+    runDataverseWrite,
+  } = useData();
   const [typeCode, setTypeCode] = useState<number>(EVENT_TYPES[0]?.code ?? 216260000);
   const [title, setTitle] = useState("");
   const [titleEdited, setTitleEdited] = useState(false);
@@ -91,12 +97,22 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
       // as a different moment than intended — a mismatch that showed up as
       // the created event landing on the wrong day/time.
       const localDateTime = new Date(`${date}T${time}:00`);
-      await Axm365_eventsService.create({
-        axm365_name: finalTitle,
-        axm365_eventdate: localDateTime.toISOString(),
-        axm365_eventtype: typeCode as any,
-        ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
-      } as any);
+      const result = await runDataverseWrite(
+        "Creating event",
+        () => Axm365_eventsService.create({
+          axm365_name: finalTitle,
+          axm365_eventdate: localDateTime.toISOString(),
+          axm365_eventtype: typeCode as any,
+          ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
+        } as any)
+      );
+      if (!result.success) {
+        throw new Error(
+          (result.error as any)?.message ??
+            JSON.stringify(result.error) ??
+            "Failed to create event"
+        );
+      }
       await refreshEvents().catch(() => {});
       setSuccess(true);
       setTimeout(() => { go("calendar"); }, 1500);

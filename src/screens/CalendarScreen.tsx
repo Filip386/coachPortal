@@ -1,9 +1,9 @@
-import React, { useState } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw, Plus, ClipboardCheck, MapPin } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, RefreshCw, Plus, MapPin } from "lucide-react";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner } from "../components/shared";
+import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
 
@@ -13,11 +13,19 @@ interface CalendarScreenProps {
 }
 
 export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) => {
-  const { events, loading, error, refreshEvents } = useData();
+  const { events, refreshEvents, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
+  const screenLoading = isLoadingResources(["events"]);
+  const screenLoadError = hasResourceErrors(["events"]);
+  const screenError = getResourceError(["events"]);
+  const screenStale = hasStaleResources(["events"]);
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    void ensureFresh(["events"]);
+  }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);
@@ -88,10 +96,11 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
         }
       />
 
-      {loading && events.length === 0 && <LoadingSpinner label="Loading events…" />}
-      {error && events.length === 0 && <ErrorBanner message={error} onRetry={refreshData} />}
+      {screenLoading && <LoadingSpinner label="Loading events…" />}
+      {screenError && <ErrorBanner message={screenError} onRetry={refreshData} />}
+      {screenStale && <StaleDataNotice />}
 
-      {(!loading || events.length > 0) && (
+      {!screenLoading && !screenLoadError && (
         <>
           <div style={{ padding: "0 18px" }}>
             <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 22, padding: 16 }}>
@@ -167,23 +176,33 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
 
               return (
                 <div key={e.axm365_eventid} style={{ marginTop: 14 }}>
-                  <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 18, padding: 16, position: "relative", overflow: "hidden" }}>
+                  <button
+                    type="button"
+                    onClick={() => go("attendance", undefined, e.axm365_eventid)}
+                    aria-label={`Open attendance for ${eventName}`}
+                    style={{
+                      width: "100%",
+                      background: "#fff",
+                      border: `1px solid ${COLORS.line}`,
+                      borderRadius: 18,
+                      padding: 16,
+                      position: "relative",
+                      overflow: "hidden",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
                     <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: COLORS.yellow }} />
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.2em", color: COLORS.mute, textTransform: "uppercase", fontWeight: 600 }}>
-                          {startDate ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
-                        </div>
-                        <div style={{ fontFamily: displayStack, fontSize: 18, fontWeight: 800, color: COLORS.navy, marginTop: 4, letterSpacing: "-0.01em" }}>{eventName}</div>
-                        <div style={{ display: "flex", gap: 10, color: COLORS.mute, fontSize: 11.5, marginTop: 8 }}>
-                          <span style={{ display: "flex", gap: 4, alignItems: "center" }}><MapPin size={12} /> {location}</span>
-                        </div>
+                    <div>
+                      <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.2em", color: COLORS.mute, textTransform: "uppercase", fontWeight: 600 }}>
+                        {startDate ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
                       </div>
-                      <button onClick={() => go("attendance", undefined, e.axm365_eventid)} style={{ background: "transparent", border: 0, cursor: "pointer" }}>
-                        <ClipboardCheck size={16} color={COLORS.navy} strokeWidth={2} />
-                      </button>
+                      <div style={{ fontFamily: displayStack, fontSize: 18, fontWeight: 800, color: COLORS.navy, marginTop: 4, letterSpacing: "-0.01em" }}>{eventName}</div>
+                      <div style={{ display: "flex", gap: 10, color: COLORS.mute, fontSize: 11.5, marginTop: 8 }}>
+                        <span style={{ display: "flex", gap: 4, alignItems: "center" }}><MapPin size={12} /> {location}</span>
+                      </div>
                     </div>
-                  </div>
+                  </button>
                 </div>
               );
             })}

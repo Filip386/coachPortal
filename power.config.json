@@ -75,6 +75,11 @@
           "entitySetName": "contacts",
           "logicalName": "contact",
           "isHidden": false
+        },
+        "tasks": {
+          "entitySetName": "tasks",
+          "logicalName": "task",
+          "isHidden": false
         }
       },
       "environmentVariableName": ""

@@ -1,29 +1,57 @@
 
-import React, { useEffect } from "react";
-import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Bell } from "lucide-react";
+import React, { useEffect, useMemo } from "react";
+import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Check, X } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, SectionTitle, ActionTile, ErrorBanner } from "../components/shared";
+import { StatusBar, SectionTitle, ActionTile, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
-import { useData } from "../context/DataContext";
+import { useData, type DataResourceStatus } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
+import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
-  const { coachName, players, events, invoices, tasks, loading, error, refreshAll } = useData();
-  const firstName = coachName ? coachName.split(" ")[0] : null;
+const hasUsableData = (status: DataResourceStatus): boolean =>
+  status === "ready" || status === "refreshing" || status === "stale";
 
-  // Screens unmount/remount as the bottom nav switches between them, so this
-  // fires every time the coach lands back on Home — e.g. after creating an
-  // event or another screen changes data — without needing to relaunch the
-  // app. Cached/previous data still renders immediately; this just
-  // revalidates it in the background.
+export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
+  const { coachName, coachId, players, events, coachAttendances, invoices, tasks, refreshAll, ensureFresh, resourceStatus, hasStaleResources, getResourceError } = useData();
+  const firstName = coachName ? coachName.split(" ")[0] : null;
+  const homeError = getResourceError(["players", "events", "invoices"]);
+  const homeStale = hasStaleResources(["players", "events", "invoices", "coachAttendances"]);
+  const attendanceError = getResourceError(["coachAttendances"]);
+  const playersAvailable = hasUsableData(resourceStatus.players);
+  const eventsAvailable = hasUsableData(resourceStatus.events);
+  const invoicesAvailable = hasUsableData(resourceStatus.invoices);
+  const coachAttendancesAvailable = hasUsableData(
+    resourceStatus.coachAttendances
+  );
+  const attendanceHistoryAvailable =
+    Boolean(coachId) && eventsAvailable && coachAttendancesAvailable;
+  const eventsLoading =
+    resourceStatus.events === "idle" || resourceStatus.events === "loading";
+
+  // Stage 1: immediately load only the data Home needs. Stage 2: if Home
+  // remains mounted for two seconds, revalidate the remaining stale resources
+  // in the background. Navigating away cancels only the second stage.
   useEffect(() => {
-    refreshAll().catch(() => {});
-  }, [refreshAll]);
+    void ensureFresh(["players", "events", "coachAttendances", "invoices"]);
+
+    const timer = window.setTimeout(() => {
+      void ensureFresh([
+        "attendances",
+        "facilities",
+        "performances",
+        "generations",
+        "generationsToCoaches",
+        "tasks",
+      ]);
+    }, 2000);
+
+    return () => window.clearTimeout(timer);
+  }, [ensureFresh]);
 
   const todayEvents = events
     .filter((e) => {
@@ -40,6 +68,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
     .filter((e) => e.axm365_eventdate && new Date(e.axm365_eventdate) >= now)
     .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime())
     .slice(0, 3);
+
+  const recentCoachAttendance = useMemo(
+    () =>
+      attendanceHistoryAvailable
+        ? buildCoachAttendanceHistory(events, coachAttendances, coachId)
+            .slice(0, 15)
+            .reverse()
+        : [],
+    [attendanceHistoryAvailable, coachAttendances, coachId, events]
+  );
 
   return (
     <>
@@ -68,30 +106,33 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             onClick={() => go("notifications")}
             style={{ position: "relative", width: 38, height: 38, borderRadius: 12, background: "rgba(255,255,255,0.08)", border: `1px solid rgba(255,255,255,0.12)`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >
-            <Bell size={18} color="#ffffff" strokeWidth={2} />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+              <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+            </svg>
             {tasks.length > 0 && (
               <span
                 style={{
                   position: "absolute",
-                  top: -5,
-                  right: -5,
-                  minWidth: 17,
-                  height: 17,
+                  top: -4,
+                  right: -4,
+                  minWidth: 16,
+                  height: 16,
                   padding: "0 4px",
                   background: COLORS.yellow,
                   color: COLORS.navy,
                   borderRadius: 99,
                   border: `2px solid ${COLORS.navy}`,
-                  fontSize: 9.5,
-                  fontWeight: 800,
-                  fontFamily: monoStack,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
+                  fontFamily: monoStack,
+                  fontSize: 9,
+                  fontWeight: 800,
                   lineHeight: 1,
                 }}
               >
-                {tasks.length > 99 ? "99+" : tasks.length}
+                {tasks.length > 9 ? "9+" : tasks.length}
               </span>
             )}
           </button>
@@ -105,23 +146,122 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
             Buenos días,<br />
             <span style={{ color: COLORS.yellow }}>{firstName ? `${firstName}.` : "Coach."}</span>
           </h1>
-          {loading ? (
-            <div style={{ marginTop: 16, opacity: 0.6, fontFamily: monoStack, fontSize: 11 }}>Loading stats…</div>
-          ) : (
-            <div style={{ marginTop: 16, display: "flex", gap: 22 }}>
-              <Stat label="Squad" value={String(squadCount)} />
-              <Divider />
-              <Stat label="Events" value={String(events.length)} />
-              <Divider />
-              <Stat label="Overdue" value={String(overdueInvoices.length)} warn={overdueInvoices.length > 0} />
+          <div style={{ marginTop: 16, display: "flex", gap: 22 }}>
+            <Stat label="Squad" value={playersAvailable ? String(squadCount) : "—"} />
+            <Divider />
+            <Stat label="Events" value={eventsAvailable ? String(events.length) : "—"} />
+            <Divider />
+            <Stat
+              label="Overdue"
+              value={invoicesAvailable ? String(overdueInvoices.length) : "—"}
+              warn={invoicesAvailable && overdueInvoices.length > 0}
+            />
+          </div>
+
+          <button
+            onClick={() => go("coach-attendance")}
+            aria-label="Open my attendance history"
+            style={{
+              width: "100%",
+              marginTop: 20,
+              padding: "12px 13px",
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.13)",
+              background: "rgba(255,255,255,0.07)",
+              color: "#fff",
+              textAlign: "left",
+              cursor: "pointer",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: monoStack,
+                  fontSize: 9.5,
+                  letterSpacing: "0.16em",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                  opacity: 0.78,
+                }}
+              >
+                My attendance · Last 15
+              </span>
+              <ChevronRight size={14} strokeWidth={2.2} />
             </div>
-          )}
+
+            {attendanceHistoryAvailable && recentCoachAttendance.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  marginTop: 10,
+                }}
+              >
+                {recentCoachAttendance.map(({ event, status }) => {
+                  const present = status === "present";
+                  const DotIcon = present ? Check : X;
+                  return (
+                    <span
+                      key={event.axm365_eventid}
+                      title={`${event.axm365_name || "Event"}: ${
+                        present ? "Present" : "Absent"
+                      }`}
+                      style={{
+                        width: 16,
+                        height: 16,
+                        flexShrink: 0,
+                        borderRadius: "50%",
+                        background: present ? COLORS.green : COLORS.red,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "#fff",
+                      }}
+                    >
+                      <DotIcon size={10} strokeWidth={3.2} />
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  opacity: 0.72,
+                }}
+              >
+                {attendanceError
+                  ? "Attendance unavailable · Tap for details"
+                  : attendanceHistoryAvailable
+                  ? "No past events assigned yet"
+                  : "Loading attendance…"}
+              </div>
+            )}
+          </button>
         </div>
       </div>
 
-      {error && <ErrorBanner message={error} onRetry={refreshAll} />}
+      {homeError && <ErrorBanner message={homeError} onRetry={refreshAll} />}
+      {homeStale && <StaleDataNotice />}
 
-      {!loading && (
+      {eventsLoading && (
+        <div style={{ padding: "16px 22px 0", color: COLORS.mute, fontFamily: monoStack, fontSize: 11 }}>
+          Loading events…
+        </div>
+      )}
+
+      {eventsAvailable && (
         <div style={{ padding: "0 18px", marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {todayEvents.length === 0 ? (
             <div
@@ -163,7 +303,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                     </div>
                   </div>
                   <div style={{ textAlign: "right", fontFamily: displayStack }}>
-                    <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{squadCount}</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: COLORS.navy, lineHeight: 1 }}>{playersAvailable ? squadCount : "—"}</div>
                     <div style={{ fontSize: 9.5, fontFamily: monoStack, letterSpacing: "0.16em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>Players</div>
                   </div>
                 </div>
@@ -186,12 +326,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
           <ActionTile color={COLORS.navy} text="#fff" icon={Plus} title="Create Event" sub="Schedule a session" onClick={() => go("create")} />
           <ActionTile color={COLORS.yellow} text={COLORS.navy} icon={TrendingUp} title="Performance" sub="Latest stats & ratings" onClick={() => go("performance")} />
-          <ActionTile color="#fff" text={COLORS.navy} icon={CircleDollarSign} title="Invoices" sub={overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue` : "All clear"} onClick={() => go("invoices")} bordered />
-          <ActionTile color="#fff" text={COLORS.navy} icon={Users} title="My Squad" sub={`${squadCount} players`} onClick={() => go("players")} bordered />
+          <ActionTile color="#fff" text={COLORS.navy} icon={CircleDollarSign} title="Invoices" sub={invoicesAvailable ? (overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue` : "All clear") : "Loading…"} onClick={() => go("invoices")} bordered />
+          <ActionTile color="#fff" text={COLORS.navy} icon={Users} title="My Squad" sub={playersAvailable ? `${squadCount} players` : "Loading…"} onClick={() => go("players")} bordered />
         </div>
       </div>
 
-      {!loading && upcoming.length > 0 && (
+      {eventsAvailable && upcoming.length > 0 && (
         <div style={{ padding: "20px 22px 8px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <SectionTitle eyebrow="This Week" title="Upcoming" />

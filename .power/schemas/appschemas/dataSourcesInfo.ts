@@ -5,732 +5,54 @@
  */
 
 export const dataSourcesInfo = {
+  "axm365_eventattendances": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_eventattendanceid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_eventcoachattendances": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_eventcoachattendanceid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_events": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_eventid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_generations": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_generationid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_generationstocoacheses": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_generationstocoachesid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "axm365_playereventperformances": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "axm365_playereventperformanceid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "commondataserviceforapps": {
     "tableId": "",
     "version": "",
     "primaryKey": "",
     "dataSourceType": "Connector",
     "apis": {
-      "GetOrganizations": {
-        "path": "/{connectionId}/v1.0/$metadata.json/organizations",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetOrganizationsTest": {
-        "path": "/{connectionId}/v1.0/$metadata.json/organizationsTest",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForGetEntity": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "selectedEntityAttributes",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "expandEntityAttributes",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForGetEntityWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "selectedEntityAttributes",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "expandEntityAttributes",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForGetEntityCUDTrigger": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}/cudtrigger",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForGetEntityCUDTriggerWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/cudtrigger",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetActivityPartyAttributes": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}/activityparties",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetActivityPartyAttributesWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetActivityPartyAttributesWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForPostEntity": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}/postitem",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForPostEntityWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/postitem",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForPatchEntity": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}/patchitem",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForPatchEntityWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/entities/{entityName}/patchitem",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntityRelationships": {
-        "path": "/{connectionId}/$metadata.json/entities/{entityName}/relationships",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntityRelationshipsWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetEntityRelationshipsWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetAttributeFilters": {
-        "path": "/{connectionId}/entities/{entityName}/attributefilters",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "attributeTypeNames",
-            "in": "header",
-            "required": false,
-            "type": "array"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "array"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetAttributeFiltersWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetAttributeFiltersWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetScopeFilters": {
-        "path": "/{connectionId}/entities/{entityName}/scopefilters",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "array"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetScopeFiltersWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetScopeFiltersWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetOptionSetMetadata": {
-        "path": "/{connectionId}/entities/{entityName}/attributes/{attributeMetadataId}/optionSets/{type}",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "attributeMetadataId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "type",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetOptionSetMetadataWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetOptionSetMetadataWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetOptionSetMetadataWithEntitySetName": {
-        "path": "/{connectionId}/entities/{entityName}/attributes/{attributeMetadataId}/optionSets/{type}/entitysetname",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "attributeMetadataId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "type",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetOptionSetMetadataWithEntitySetNameWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetOptionSetMetadataWithEntitySetNameWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntities": {
-        "path": "/{connectionId}/api/data/v9.1/EntityDefinitions",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntitiesWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetEntityListEnum/GetEntitiesWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "SubscribeWebhookTrigger": {
         "path": "/{connectionId}/api/data/v9.1/callbackregistrations",
         "method": "POST",
@@ -738,56 +60,6 @@ export const dataSourcesInfo = {
           {
             "name": "connectionId",
             "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "Consistency",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "subscriptionRequest",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          },
-          {
-            "name": "catalog",
-            "in": "header",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "name": "category",
-            "in": "header",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "204": {
-            "type": "void"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "SubscribeWebhookTriggerWithOrganization": {
-        "path": "/{connectionId}/api/data/v9.1.0/callbackregistrations",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
             "required": true,
             "type": "string"
           },
@@ -893,7 +165,8 @@ export const dataSourcesInfo = {
             "name": "$top",
             "in": "query",
             "required": false,
-            "type": "integer"
+            "type": "integer",
+            "format": "int32"
           },
           {
             "name": "$skiptoken",
@@ -1047,7 +320,8 @@ export const dataSourcesInfo = {
             "name": "$top",
             "in": "query",
             "required": false,
-            "type": "integer"
+            "type": "integer",
+            "format": "int32"
           },
           {
             "name": "$skiptoken",
@@ -1605,172 +879,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "Predict": {
-        "path": "/{connectionId}/api/data/v9.0/msdyn_aimodels({modelId})/Microsoft.Dynamics.CRM.Predict",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "modelId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "item",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetPredictionSchema": {
-        "path": "/{connectionId}/$metadata.json/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.PredictionSchema",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "recordId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "predictionMode",
-            "in": "header",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "PredictV2": {
-        "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.Predict",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "recordId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "Prefer",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "item",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "AddToFeedbackLoop": {
-        "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.AddToFeedbackLoop",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "recordId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "item",
-            "in": "body",
-            "required": false,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "204": {
-            "type": "void"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "PredictByReference": {
-        "path": "/{connectionId}/api/data/v9.1/msdyn_aimodels({recordId})/Microsoft.Dynamics.CRM.PredictByReference",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "recordId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "item",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "AssociateEntities": {
         "path": "/{connectionId}/api/data/v9.1/{entityName}({recordId})/{associationEntityRelationship}/$ref",
         "method": "POST",
@@ -1959,430 +1067,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "GetMetadataForUnboundActionInput": {
-        "path": "/{connectionId}/$metadata.json/flow/api/data/v9.1/{actionName}/inputs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForUnboundActionInputWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/actions/unbound/{actionName}/inputs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundActionInput": {
-        "path": "/{connectionId}/$metadata.json/api/data/v9.1/{entityName}/{actionName}/inputs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundActionInputWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/actions/bound/{entityName}/{actionName}/inputs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundOrUnboundActionInput": {
-        "path": "/{connectionId}/$metadata.json/api/data/v9.2/{entityName}/{actionName}/asyncinputs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundOrUnboundActionResponse": {
-        "path": "/{connectionId}/$metadata.json/api/data/v9.2/{entityName}/{actionName}/asyncresponse",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForUnboundActionResponse": {
-        "path": "/{connectionId}/$metadata.json/flow/api/data/v9.1/{actionName}/response",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForUnboundActionResponseWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/actions/unbound/{actionName}/response",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundActionResponse": {
-        "path": "/{connectionId}/$metadata.json/api/data/v9.1/{entityName}/{actionName}/response",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForBoundActionResponseWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/actions/bound/{entityName}/{actionName}/response",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetUnboundActions": {
-        "path": "/{connectionId}/flow/api/data/v9.1/actions",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetUnboundActionsWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetActionListEnum/GetUnboundActionsWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetBoundActions": {
-        "path": "/{connectionId}/api/data/v9.1/{entityName}/actions",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetBoundActionsWithOrganization": {
-        "path": "/{connectionId}/v1.0/$metadata.json/GetActionListEnum/GetBoundActionsWithOrganization",
-        "method": "POST",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "header",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "PerformUnboundAction": {
         "path": "/{connectionId}/flow/api/data/v9.1/{actionName}",
         "method": "POST",
@@ -2547,32 +1231,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "RecordSelected": {
-        "path": "/{connectionId}/hybridtriggers/entities/{entityName}/onrecordselected",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "ExecuteChangeset": {
         "path": "/{connectionId}/api/data/v9.1/$batch",
         "method": "POST",
@@ -2628,7 +1286,8 @@ export const dataSourcesInfo = {
             "name": "item",
             "in": "body",
             "required": true,
-            "type": "object"
+            "type": "string",
+            "format": "binary"
           },
           {
             "name": "x-ms-file-name",
@@ -2690,7 +1349,8 @@ export const dataSourcesInfo = {
             "name": "item",
             "in": "body",
             "required": true,
-            "type": "object"
+            "type": "string",
+            "format": "binary"
           },
           {
             "name": "x-ms-file-name",
@@ -2816,26 +1476,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "FlowStepRun": {
-        "path": "/{connectionId}/hybridtriggers/onflowsteprun",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "GetRelevantRows": {
         "path": "/{connectionId}/api/search/v1.0/query",
         "method": "POST",
@@ -2851,186 +1491,6 @@ export const dataSourcesInfo = {
             "in": "body",
             "required": true,
             "type": "object"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetCatalogs": {
-        "path": "/{connectionId}/api/data/v9.2/catalogs",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetCategories": {
-        "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/categories",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "catalog",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntitiesForActionTrigger": {
-        "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entitiesForActionTrigger",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "catalog",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetEntitiesForBackgroundOperations": {
-        "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entitiesForBackgroundOperations",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "catalog",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetActionsForActionTrigger": {
-        "path": "/{connectionId}/api/data/v9.2/catalog/{catalog}/category/{category}/entityForActionTrigger/{entity}/actions",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "catalog",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetMetadataForActionInputAndResponseForWhenAnActionIsPerformedTrigger": {
-        "path": "/{connectionId}/$metadata.json/whenAnActionIsPerformedEntity/{entityName}/whenAnActionIsPerformedAction/{actionName}",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entityName",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "actionName",
-            "in": "path",
-            "required": true,
-            "type": "string"
           }
         ],
         "responseInfo": {
@@ -3151,88 +1611,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "GetBackgroundOperations": {
-        "path": "/{connectionId}/api/data/v9.2/GetBackgroundOperations(catalogUniqueName='{catalog}',categoryUniqueName='{category}',entityLogicalName='{entity}')",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "catalog",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "category",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "entity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
-      "GetNextPageWithOrganization": {
-        "path": "/{connectionId}/nextLink",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "organization",
-            "in": "query",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "next",
-            "in": "query",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "void"
-          },
-          "400": {
-            "type": "void"
-          },
-          "401": {
-            "type": "void"
-          },
-          "403": {
-            "type": "void"
-          },
-          "500": {
-            "type": "void"
-          },
-          "default": {
-            "type": "void"
-          }
-        }
-      },
       "InvokeMCP": {
         "path": "/{connectionId}/api/mcp",
         "method": "POST",
@@ -3265,32 +1643,6 @@ export const dataSourcesInfo = {
           }
         }
       },
-      "GetInvokeMCP": {
-        "path": "/{connectionId}/api/mcp",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "Mcp-Session-Id",
-            "in": "header",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "201": {
-            "type": "object"
-          }
-        }
-      },
       "InvokeMCPPreview": {
         "path": "/{connectionId}/api/mcp_preview",
         "method": "POST",
@@ -3320,32 +1672,6 @@ export const dataSourcesInfo = {
           },
           "default": {
             "type": "void"
-          }
-        }
-      },
-      "GetInvokeMCPPreview": {
-        "path": "/{connectionId}/api/mcp_preview",
-        "method": "GET",
-        "parameters": [
-          {
-            "name": "connectionId",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "Mcp-Session-Id",
-            "in": "header",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "responseInfo": {
-          "200": {
-            "type": "object"
-          },
-          "201": {
-            "type": "object"
           }
         }
       },
@@ -3543,13 +1869,6 @@ export const dataSourcesInfo = {
       }
     }
   },
-  "cr9be_coachs": {
-    "tableId": "",
-    "version": "",
-    "primaryKey": "cr9be_coachid",
-    "dataSourceType": "Dataverse",
-    "apis": {}
-  },
   "contacts": {
     "tableId": "",
     "version": "",
@@ -3557,24 +1876,17 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
-  "axm365_eventattendances": {
+  "cr9be_coachs": {
     "tableId": "",
     "version": "",
-    "primaryKey": "axm365_eventattendanceid",
+    "primaryKey": "cr9be_coachid",
     "dataSourceType": "Dataverse",
     "apis": {}
   },
-  "axm365_eventcoachattendances": {
+  "cr9be_players": {
     "tableId": "",
     "version": "",
-    "primaryKey": "axm365_eventcoachattendanceid",
-    "dataSourceType": "Dataverse",
-    "apis": {}
-  },
-  "axm365_events": {
-    "tableId": "",
-    "version": "",
-    "primaryKey": "axm365_eventid",
+    "primaryKey": "cr9be_playerid",
     "dataSourceType": "Dataverse",
     "apis": {}
   },
@@ -3585,20 +1897,6 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
-  "axm365_generations": {
-    "tableId": "",
-    "version": "",
-    "primaryKey": "axm365_generationid",
-    "dataSourceType": "Dataverse",
-    "apis": {}
-  },
-  "axm365_generationstocoacheses": {
-    "tableId": "",
-    "version": "",
-    "primaryKey": "axm365_generationstocoachesid",
-    "dataSourceType": "Dataverse",
-    "apis": {}
-  },
   "invoices": {
     "tableId": "",
     "version": "",
@@ -3606,17 +1904,10 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
-  "axm365_playereventperformances": {
+  "tasks": {
     "tableId": "",
     "version": "",
-    "primaryKey": "axm365_playereventperformanceid",
-    "dataSourceType": "Dataverse",
-    "apis": {}
-  },
-  "cr9be_players": {
-    "tableId": "",
-    "version": "",
-    "primaryKey": "cr9be_playerid",
+    "primaryKey": "activityid",
     "dataSourceType": "Dataverse",
     "apis": {}
   }
