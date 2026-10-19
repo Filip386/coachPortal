@@ -305,7 +305,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
 
-    sourcePlayers.forEach((p) => {
+    players.forEach((p) => {
       const id = (p as any)._cr9be_generation_value as string | undefined;
 
       const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
