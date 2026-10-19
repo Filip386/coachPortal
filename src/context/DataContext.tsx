@@ -162,6 +162,9 @@ interface DataContextValue {
     attendanceId: string,
     clockIn: string
   ) => void;
+  /** Merge confirmed player attendance writes into memory and the cache
+   *  without re-downloading the whole attendance table. */
+  recordPlayerAttendances: (confirmed: Axm365_eventattendances[]) => void;
   ensureFresh: (
     resources: DataResource[],
     options?: EnsureFreshOptions
@@ -291,7 +294,101 @@ function readCache<T>(key: string): T[] {
 function writeCache<T>(key: string, data: T[]) {
   try {
     localStorage.setItem(key, JSON.stringify(data));
-  } catch {}
+  } catch (cacheError) {
+    // Usually the Android WebView quota. The next launch then starts this
+    // resource without data and blocks its screen until a full reload.
+    console.warn(`[CoachPortal] Could not persist the ${key} cache:`, cacheError);
+  }
+}
+
+
+/** Player attendance columns used by the app. Selecting only these keeps the
+ *  mobile download and the persisted cache small as the table grows. */
+export const PLAYER_ATTENDANCE_FIELDS = [
+  "axm365_eventattendanceid",
+  "axm365_name",
+  "axm365_attended",
+  "_axm365_event_value",
+  "_axm365_player_value",
+];
+
+
+function compactPlayerAttendance(
+  attendance: Axm365_eventattendances
+): Axm365_eventattendances {
+  return {
+    axm365_eventattendanceid: attendance.axm365_eventattendanceid,
+    axm365_name: attendance.axm365_name,
+    axm365_attended: attendance.axm365_attended,
+    _axm365_event_value: attendance._axm365_event_value,
+    _axm365_player_value: attendance._axm365_player_value,
+  } as Axm365_eventattendances;
+}
+
+
+/** Player performance columns used by Attendance, Performance and Players. */
+const PLAYER_PERFORMANCE_FIELDS = [
+  "axm365_playereventperformanceid",
+  "axm365_performancename",
+  "axm365_raiting",
+  "axm365_technique",
+  "axm365_effort",
+  "axm365_tacticalawareness",
+  "axm365_teamplay",
+  "axm365_notes",
+  "createdon",
+  "_axm365_cr9be_player_value",
+  "_axm365_event_value",
+];
+
+
+function compactPlayerPerformance(
+  performance: Axm365_playereventperformances
+): Axm365_playereventperformances {
+  return {
+    axm365_playereventperformanceid: performance.axm365_playereventperformanceid,
+    axm365_performancename: performance.axm365_performancename,
+    axm365_raiting: performance.axm365_raiting,
+    axm365_technique: performance.axm365_technique,
+    axm365_effort: performance.axm365_effort,
+    axm365_tacticalawareness: performance.axm365_tacticalawareness,
+    axm365_teamplay: performance.axm365_teamplay,
+    axm365_notes: performance.axm365_notes,
+    createdon: performance.createdon,
+    _axm365_cr9be_player_value: performance._axm365_cr9be_player_value,
+    _axm365_event_value: performance._axm365_event_value,
+  } as Axm365_playereventperformances;
+}
+
+
+// Invoice fields read by Home, Invoices and getInvoiceStatus. Their OData
+// formatted-value annotations (e.g. the customer display name) are kept too.
+const INVOICE_CACHE_FIELDS = new Set([
+  "invoiceid",
+  "invoicenumber",
+  "name",
+  "description",
+  "totalamount",
+  "duedate",
+  "statecode",
+  "statuscode",
+  "customerid",
+  "customeridtype",
+  "customeridname",
+  "contactidname",
+  "_contactid_value",
+  "_customerid_value",
+]);
+
+
+function compactInvoice(invoice: Invoices): Invoices {
+  const compact: Record<string, unknown> = {};
+  Object.entries(invoice as unknown as Record<string, unknown>).forEach(
+    ([key, value]) => {
+      if (INVOICE_CACHE_FIELDS.has(key.split("@")[0])) compact[key] = value;
+    }
+  );
+  return compact as unknown as Invoices;
 }
 
 
@@ -1585,14 +1682,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const refreshPlayers = useCallback(() =>
     runResourceRefresh("players", "Loading players", async () => {
       const data = sortPlayersByName(
-        await fetchAllPages<Cr9be_players>((skipToken) =>
-          Cr9be_playersService.getAll({
-            filter: "statecode eq 0",
-            orderBy: ["cr9be_name asc", "cr9be_playerid asc"],
-            ...(skipToken ? { skipToken } : {}),
-          })
-        )
+        (
+          await fetchAllPages<Cr9be_players>((skipToken) =>
+            Cr9be_playersService.getAll({
+              filter: "statecode eq 0",
+              orderBy: ["cr9be_name asc", "cr9be_playerid asc"],
+              ...(skipToken ? { skipToken } : {}),
+            })
+          )
+        ).map(({ cr9be_picture, ...player }) => player as Cr9be_players)
       );
+      // cr9be_picture can hold each Player's base64 thumbnail. Photos are
+      // cached separately by photoCache, and keeping them here can fill the
+      // mobile localStorage quota before later tables (e.g. invoices) persist.
 
       setPlayers(data);
       writeCache(CACHE.players, data);
@@ -1648,13 +1750,56 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshAttendances = useCallback(() =>
     runResourceRefresh("attendances", "Loading attendances", async () => {
-      const res = await Axm365_eventattendancesService.getAll({});
-      const data = unwrapOrThrow<Axm365_eventattendances>(res);
+      // Paged like Players/Events: a single getAll stops at one server page.
+      const data = (
+        await fetchAllPages<Axm365_eventattendances>((skipToken) =>
+          Axm365_eventattendancesService.getAll({
+            select: PLAYER_ATTENDANCE_FIELDS,
+            orderBy: ["axm365_eventattendanceid asc"],
+            ...(skipToken ? { skipToken } : {}),
+          })
+        )
+      ).map(compactPlayerAttendance);
 
       setAttendances(data);
       writeCache(CACHE.attendances, data);
     }),
   [runResourceRefresh]);
+
+
+  // Reflect confirmed attendance writes in memory and the cache without
+  // re-downloading the whole table. Rows are replaced in place by id so the
+  // screen keeps finding the same record on the next save.
+  const recordPlayerAttendances = useCallback(
+    (confirmed: Axm365_eventattendances[]) => {
+      if (confirmed.length === 0) return;
+
+      const confirmedById = new Map(
+        confirmed.map((attendance) => [
+          normalizeGuid(attendance.axm365_eventattendanceid),
+          compactPlayerAttendance(attendance),
+        ])
+      );
+
+      setAttendances((current) => {
+        const replaced = new Set<string>();
+        const next = current.map((item) => {
+          const id = normalizeGuid(item.axm365_eventattendanceid);
+          const confirmedRow = confirmedById.get(id);
+          if (!confirmedRow) return item;
+          replaced.add(id);
+          return confirmedRow;
+        });
+        confirmedById.forEach((row, id) => {
+          if (!replaced.has(id)) next.push(row);
+        });
+
+        writeCache(CACHE.attendances, next);
+        return next;
+      });
+    },
+    []
+  );
 
 
   // ---------------------------------------------------------
@@ -1857,7 +2002,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       const data = unwrapOrThrow<Invoices>(res);
 
       setInvoices(data);
-      writeCache(CACHE.invoices, data);
+      // Full invoice rows carry dozens of unused columns and can exceed the
+      // mobile storage quota, leaving the next launch without invoices.
+      writeCache(CACHE.invoices, data.map(compactInvoice));
     }),
   [runResourceRefresh]);
 
@@ -1882,8 +2029,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshPerformances = useCallback(() =>
     runResourceRefresh("performances", "Loading performances", async () => {
-      const res = await Axm365_playereventperformancesService.getAll({});
-      const data = unwrapOrThrow<Axm365_playereventperformances>(res);
+      // Paged like Attendances: a single getAll stops at one server page.
+      const data = (
+        await fetchAllPages<Axm365_playereventperformances>((skipToken) =>
+          Axm365_playereventperformancesService.getAll({
+            select: PLAYER_PERFORMANCE_FIELDS,
+            orderBy: ["axm365_playereventperformanceid asc"],
+            ...(skipToken ? { skipToken } : {}),
+          })
+        )
+      ).map(compactPlayerPerformance);
 
       setPerformances(data);
       writeCache(CACHE.performances, data);
@@ -3085,6 +3240,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         refreshTasks,
 
         recordCoachClockIn,
+
+        recordPlayerAttendances,
 
         ensureFresh,
 

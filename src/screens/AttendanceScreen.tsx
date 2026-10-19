@@ -34,7 +34,8 @@ import {
   SuccessBanner,
   AttributeSlider,
 } from "../components/ui";
-import { useData } from "../context/DataContext";
+import { useData, PLAYER_ATTENDANCE_FIELDS } from "../context/DataContext";
+import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
 import { lookupName, unwrap } from "../utils/dataverse";
 import { isEventActive } from "../utils/eventStatus";
 
@@ -100,16 +101,22 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     runDataverseRead,
     runDataverseWrite,
     recordCoachClockIn,
+    recordPlayerAttendances,
   } = useData();
 
+  // Attendance is deliberately not part of the blocking loader: the roster
+  // stays visible while saved marks load, and only marking/saving waits.
   const screenLoading = isLoadingResources([
     "players",
     "events",
-    "attendances",
     "performances",
     "generations",
     "generationsToCoaches",
   ]);
+  const attendanceReady =
+    resourceStatus.attendances === "ready" ||
+    resourceStatus.attendances === "refreshing" ||
+    resourceStatus.attendances === "stale";
   const screenLoadError = hasResourceErrors([
     "players",
     "events",
@@ -136,6 +143,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   ]);
 
   const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, AttendanceMark>>({});
 
@@ -703,12 +714,46 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       [id]: v,
     }));
 
-  const presentCount = shownPlayers.filter(
-    (p) => (marks[p.cr9be_playerid] ?? "present") !== "absent"
+  // Header totals represent attendance already saved for this Event, not the
+  // form's draft defaults. New Events intentionally begin at Players = roster
+  // size, Present = 0 and Absent = 0. Clicking Save writes every shown Player
+  // whose saved value differs (unmodified rows default to Present), and the
+  // confirmed writes are merged into attendances to update these totals.
+  const savedAttendanceByPlayer = useMemo(() => {
+    const result = new Map<string, boolean>();
+    const normalizedEventId = normalizeGuid(selectedEventId);
+    if (!normalizedEventId) return result;
+
+    const shownPlayerIds = new Set(
+      shownPlayers.map((player) => normalizeGuid(player.cr9be_playerid))
+    );
+
+    attendances.forEach((attendance) => {
+      if (
+        normalizeGuid((attendance as any)._axm365_event_value) !==
+        normalizedEventId
+      ) {
+        return;
+      }
+
+      const playerId = normalizeGuid(
+        (attendance as any)._axm365_player_value
+      );
+      if (!playerId || !shownPlayerIds.has(playerId)) return;
+
+      // Count each Player once even if legacy duplicate rows exist.
+      result.set(playerId, Boolean(attendance.axm365_attended));
+    });
+
+    return result;
+  }, [attendances, selectedEventId, shownPlayers]);
+
+  const presentCount = Array.from(savedAttendanceByPlayer.values()).filter(
+    Boolean
   ).length;
 
-  const absentCount = shownPlayers.filter(
-    (p) => marks[p.cr9be_playerid] === "absent"
+  const absentCount = Array.from(savedAttendanceByPlayer.values()).filter(
+    (attended) => !attended
   ).length;
 
   const attendancePct =
@@ -1033,21 +1078,44 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
+    // Without the saved rows, every Player would look new and Save would
+    // create duplicates instead of updating.
+    if (!attendanceReady) {
+      setWriteError(
+        "Saved attendance is still loading. Please wait a moment and try again."
+      );
+      return;
+    }
+
+    // Each write is a separate queued round trip on mobile, so skip Players
+    // whose saved value already matches their mark.
+    const writes = shownPlayers.flatMap((p) => {
+      const playerId = p.cr9be_playerid;
+      const attended = (marks[playerId] ?? "present") !== "absent";
+
+      const existing = attendances.find(
+        (a) =>
+          (a as any)._axm365_player_value === playerId &&
+          (a as any)._axm365_event_value === selectedEventId
+      );
+
+      if (existing && Boolean(existing.axm365_attended) === attended) {
+        return [];
+      }
+
+      return [{ player: p, playerId, attended, existing }];
+    });
+
+    const confirmed: Axm365_eventattendances[] = [];
+    let createdWithoutId = false;
+    let failed = false;
+
+    setSaving(true);
+    setSaveProgress({ done: 0, total: writes.length });
+
     try {
-      setSaving(true);
-
-      for (const p of shownPlayers) {
-        const playerId = p.cr9be_playerid;
-
-        const mark = marks[playerId] ?? "present";
-
-        const attended = mark !== "absent";
-
-        const existing = attendances.find(
-          (a) =>
-            (a as any)._axm365_player_value === playerId &&
-            (a as any)._axm365_event_value === selectedEventId
-        );
+      for (let index = 0; index < writes.length; index += 1) {
+        const { player: p, playerId, attended, existing } = writes[index];
 
         if (existing) {
           const res = await runDataverseWrite(
@@ -1063,6 +1131,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           );
 
           throwIfError(res, `Update ${p.cr9be_name}`);
+
+          confirmed.push({
+            ...existing,
+            axm365_name: p.cr9be_name,
+            axm365_attended: attended,
+          });
         } else {
           const res = await runDataverseWrite(
             `Creating attendance for ${p.cr9be_name}`,
@@ -1078,22 +1152,71 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           );
 
           throwIfError(res, `Create ${p.cr9be_name}`);
+
+          // The mobile host does not always echo the created record back.
+          const createdId: string | null =
+            (res as any)?.data?.axm365_eventattendanceid ??
+            (res as any)?.axm365_eventattendanceid ??
+            null;
+
+          if (createdId) {
+            confirmed.push({
+              axm365_eventattendanceid: createdId,
+              axm365_name: p.cr9be_name,
+              axm365_attended: attended,
+              _axm365_event_value: selectedEventId,
+              _axm365_player_value: playerId,
+            } as Axm365_eventattendances);
+          } else {
+            createdWithoutId = true;
+          }
         }
+
+        setSaveProgress({ done: index + 1, total: writes.length });
       }
+    } catch (err) {
+      failed = true;
+      setWriteError(
+        err instanceof Error ? err.message : "Failed to save attendance"
+      );
+    }
 
-      await refreshAttendances();
+    // Reflect confirmed writes immediately — including those that succeeded
+    // before a failure — so Present/Absent update and a retry updates these
+    // rows instead of creating duplicates.
+    recordPlayerAttendances(confirmed);
 
+    if (createdWithoutId) {
+      // New ids are needed before the next save. Read back only this Event's
+      // rows rather than the whole attendance table.
+      try {
+        const eventRows = await runDataverseRead(
+          "Confirming saved attendance",
+          () =>
+            Axm365_eventattendancesService.getAll({
+              select: PLAYER_ATTENDANCE_FIELDS,
+              filter: `_axm365_event_value eq ${selectedEventId}`,
+            })
+        );
+        throwIfError(eventRows, "Confirming saved attendance");
+        recordPlayerAttendances(
+          unwrap<Axm365_eventattendances>(eventRows) ?? []
+        );
+      } catch {
+        // The list stays visible: attendance is only "refreshing" here.
+        await refreshAttendances().catch(() => {});
+      }
+    }
+
+    setSaving(false);
+    setSaveProgress(null);
+
+    if (!failed) {
       setSaveSuccess(true);
 
       setTimeout(() => {
         go("home");
       }, 1800);
-    } catch (err) {
-      setWriteError(
-        err instanceof Error ? err.message : "Failed to save attendance"
-      );
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1400,7 +1523,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             </div>
           </div>
 
-          {!screenLoading && !screenLoadError && shownPlayers.length > 0 && (
+          {!screenLoading && !screenLoadError && attendanceReady && shownPlayers.length > 0 && (
             <div
               style={{
                 marginTop: 20,
@@ -1457,6 +1580,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   gap: 8,
                 }}
               >
+                <Tally
+                  label="Players"
+                  count={shownPlayers.length}
+                  color={COLORS.yellow}
+                />
+
                 <Tally
                   label="Present"
                   count={presentCount}
@@ -1735,8 +1864,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                           display: "flex",
                           gap: 6,
                           flexShrink: 0,
-                          opacity: locked ? 0.5 : 1,
-                          pointerEvents: locked ? "none" : undefined,
+                          opacity: locked || !attendanceReady ? 0.5 : 1,
+                          pointerEvents:
+                            locked || !attendanceReady ? "none" : undefined,
                         }}
                       >
                         <MarkBtn
@@ -1765,18 +1895,24 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
             )}
 
             <button
-              disabled={saving || locked}
+              disabled={saving || locked || !attendanceReady}
               style={{
                 marginTop: 18,
                 width: "100%",
                 padding: "14px 0",
-                background: saving || locked ? COLORS.mute : COLORS.navy,
+                background:
+                  saving || locked || !attendanceReady
+                    ? COLORS.mute
+                    : COLORS.navy,
                 color: "#fff",
                 border: 0,
                 borderRadius: 14,
                 fontSize: 14,
                 fontWeight: 700,
-                cursor: saving || locked ? "not-allowed" : "pointer",
+                cursor:
+                  saving || locked || !attendanceReady
+                    ? "not-allowed"
+                    : "pointer",
                 letterSpacing: "0.02em",
                 display: "flex",
                 alignItems: "center",
@@ -1794,7 +1930,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 />
               )}
 
-              {locked ? "Locked" : saving ? "Saving…" : "Save Attendance →"}
+              {locked
+                ? "Locked"
+                : saving
+                ? saveProgress && saveProgress.total > 0
+                  ? `Saving ${saveProgress.done}/${saveProgress.total}…`
+                  : "Saving…"
+                : !attendanceReady
+                ? "Loading saved attendance…"
+                : "Save Attendance →"}
             </button>
           </div>
         )}
