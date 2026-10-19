@@ -299,11 +299,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
     const result: { id: string; name: string }[] = [];
 
-    const coachPlayers = coachId
-      ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
-      : [];
+    // const coachPlayers = coachId
+    //   ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
+    //   : [];
 
-    const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
+    //const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
 
     players.forEach((p) => {
       const id = (p as any)._cr9be_generation_value as string | undefined;
