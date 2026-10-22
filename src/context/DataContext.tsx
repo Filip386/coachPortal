@@ -43,6 +43,7 @@ import {
 import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
+import { PERFORMANCE_SKILL_FIELDS, PARENT_FEEDBACK_FIELD } from "../utils/performanceSkills";
 import type { Contacts } from "../generated/models/ContactsModel";
 
 
@@ -326,38 +327,45 @@ function compactPlayerAttendance(
 }
 
 
-/** Player performance columns used by Attendance, Performance and Players. */
+/** Player performance columns used by Attendance, Performance and Players.
+ *  The creator is read so parent feedback can be attributed to its coach. */
 const PLAYER_PERFORMANCE_FIELDS = [
   "axm365_playereventperformanceid",
   "axm365_performancename",
   "axm365_raiting",
-  "axm365_technique",
-  "axm365_effort",
-  "axm365_tacticalawareness",
-  "axm365_teamplay",
+  ...PERFORMANCE_SKILL_FIELDS,
   "axm365_notes",
+  PARENT_FEEDBACK_FIELD,
   "createdon",
+  "_createdby_value",
   "_axm365_cr9be_player_value",
   "_axm365_event_value",
 ];
+
+const CREATED_BY_NAME_ANNOTATION =
+  "_createdby_value@OData.Community.Display.V1.FormattedValue";
 
 
 function compactPlayerPerformance(
   performance: Axm365_playereventperformances
 ): Axm365_playereventperformances {
+  const source = performance as unknown as Record<string, unknown>;
+  const pick = (fields: string[]) =>
+    Object.fromEntries(fields.map((field) => [field, source[field]]));
+
   return {
     axm365_playereventperformanceid: performance.axm365_playereventperformanceid,
     axm365_performancename: performance.axm365_performancename,
     axm365_raiting: performance.axm365_raiting,
-    axm365_technique: performance.axm365_technique,
-    axm365_effort: performance.axm365_effort,
-    axm365_tacticalawareness: performance.axm365_tacticalawareness,
-    axm365_teamplay: performance.axm365_teamplay,
+    ...pick(PERFORMANCE_SKILL_FIELDS),
     axm365_notes: performance.axm365_notes,
+    ...pick([PARENT_FEEDBACK_FIELD]),
     createdon: performance.createdon,
+    createdbyname: performance.createdbyname,
+    [CREATED_BY_NAME_ANNOTATION]: source[CREATED_BY_NAME_ANNOTATION],
     _axm365_cr9be_player_value: performance._axm365_cr9be_player_value,
     _axm365_event_value: performance._axm365_event_value,
-  } as Axm365_playereventperformances;
+  } as unknown as Axm365_playereventperformances;
 }
 
 

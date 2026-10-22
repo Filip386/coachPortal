@@ -2,26 +2,51 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Star, Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown, User, Phone } from "lucide-react";
+import { Search, ChevronDown, Pencil, X, RefreshCw, ArrowUp, ArrowDown, User, Phone, Eye } from "lucide-react";
 import { COLORS, fontStack, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
-import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
-import { AttributeBar, AttributeSlider } from "../components/ui";
+import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice, PerformanceEditorFields } from "../components/shared";
+import { AttributeBar, RatingStars } from "../components/ui";
 import { useData, type GuardianContactDetails } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
+import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
+import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
 import { lookupName } from "../utils/dataverse";
+import {
+  PERFORMANCE_SKILLS,
+  PARENT_FEEDBACK_FIELD,
+  DEFAULT_STARS,
+  formatRating,
+  parentFeedbackOf,
+  performanceRating,
+  ratingFromSkills,
+  readSkill,
+  skillLabel,
+  skillPayload,
+  skillValuesFromPerformance,
+  starsToCode,
+  type SkillValues,
+} from "../utils/performanceSkills";
 
-const CODE_TO_STARS = (code?: number): number =>
-  code !== undefined ? (code as number) - 693080000 + 1 : 2;
+const EVENT_TYPE_TRAINING = 216260000;
 
-const DEFAULT_ATTR_FOR_RATING: Record<number, number> = { 1: 10, 2: 30, 3: 50, 4: 70, 5: 90 };
+// "Training" or "Match" — every non-training event type is a kind of match.
+const eventKindLabel = (event: Axm365_events): string =>
+  event.axm365_eventtype === undefined || event.axm365_eventtype === null
+    ? event.axm365_eventtypename || "Event"
+    : event.axm365_eventtype === EVENT_TYPE_TRAINING ? "Training" : "Match";
 
-const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
-  const avg = (t + e + ta + tp) / 4;
-  return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
-};
+const formatRatingChange = (change: number): string =>
+  `${change > 0 ? "+" : ""}${Number.isInteger(change) ? change : change.toFixed(1)}`;
+
+const lineClamp = (lines: number): React.CSSProperties => ({
+  display: "-webkit-box",
+  WebkitLineClamp: lines,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+});
 
 const normalizeGuid = (value?: string | null): string =>
   (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
@@ -65,18 +90,17 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const autoSelectedCoachRef = React.useRef<string | null>(null);
   const [search, setSearch] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [perfTab, setPerfTab] = useState<"attributes" | "feedback">("attributes");
+  const [expandedFeedbackId, setExpandedFeedbackId] = useState<string | null>(null);
 
   // Performance edit modal state — event selection is optional
   const [showEditModal, setShowEditModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
   const [eventPickerOpen, setEventPickerOpen] = useState(false);
   const [eventSearch, setEventSearch] = useState("");
-  const [editRating, setEditRating] = useState(2);
-  const [editTechnique, setEditTechnique] = useState(30);
-  const [editEffort, setEditEffort] = useState(30);
-  const [editTactical, setEditTactical] = useState(30);
-  const [editTeamPlay, setEditTeamPlay] = useState(30);
+  const [editSkills, setEditSkills] = useState<SkillValues>(() => skillValuesFromPerformance());
   const [editNotes, setEditNotes] = useState("");
+  const [editParentFeedback, setEditParentFeedback] = useState("");
   const [perfSaving, setPerfSaving] = useState(false);
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
@@ -469,17 +493,43 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const latestPerf = playerPerfsSorted[0];
   const previousPerf = playerPerfsSorted[1];
 
-  const latestRatingStars = latestPerf ? CODE_TO_STARS(latestPerf.axm365_raiting as number | undefined) : 2;
-  const previousRatingStars = previousPerf ? CODE_TO_STARS(previousPerf.axm365_raiting as number | undefined) : null;
-  const ratingChange = previousRatingStars !== null ? latestRatingStars - previousRatingStars : null;
-
-  const latestTechnique = latestPerf?.axm365_technique ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
-  const latestEffort = latestPerf?.axm365_effort ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
-  const latestTactical = latestPerf?.axm365_tacticalawareness ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
-  const latestTeamPlay = latestPerf?.axm365_teamplay ?? DEFAULT_ATTR_FOR_RATING[latestRatingStars];
+  // Ratings are the half-star average of the seven skills; older records keep
+  // the rating they were saved with (see performanceRating).
+  const latestRating = latestPerf ? performanceRating(latestPerf) : DEFAULT_STARS;
+  const previousRating = previousPerf ? performanceRating(previousPerf) : null;
+  const ratingChange = previousRating !== null ? latestRating - previousRating : null;
 
   // Latest coach's note — trimmed so a whitespace-only note doesn't render an empty card.
   const latestNotes = latestPerf?.axm365_notes?.trim();
+
+  // Every record that carries parent feedback, newest first. The first one is
+  // the featured card; the rest are listed as earlier feedback.
+  const feedbackEntries = useMemo(
+    () => playerPerfsSorted.filter((p) => parentFeedbackOf(p)),
+    [playerPerfsSorted]
+  );
+  const [latestFeedback, ...earlierFeedback] = feedbackEntries;
+
+  const feedbackMeta = (perf: Axm365_playereventperformances): string => {
+    const event = perf._axm365_event_value
+      ? events.find((e) => sameGuid(e.axm365_eventid, perf._axm365_event_value))
+      : undefined;
+    const date = event?.axm365_eventdate ?? perf.createdon;
+    const dateLabel = date
+      ? new Date(date).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }).toUpperCase()
+      : null;
+    // An event that isn't in the loaded list still gets its date, just no kind.
+    const kindLabel = event ? eventKindLabel(event) : perf._axm365_event_value ? null : "General";
+    return [dateLabel, kindLabel?.toUpperCase()].filter(Boolean).join(" · ");
+  };
+
+  const playerGenerationName = player
+    ? player.cr9be_generationname || lookupName(player, "cr9be_generation")
+    : null;
+  // The author is whoever saved the record; the player's assigned coach is
+  // the fallback when Dataverse didn't return the creator's name.
+  const feedbackAuthor = (perf: Axm365_playereventperformances): string =>
+    lookupName(perf, "createdby") || lookupName(player, "cr9be_coach") || "Coach";
 
   const sortedEvents = useMemo(() => {
     const now = new Date();
@@ -523,37 +573,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         )
       : undefined;
     const source = eventMatch ?? playerPerfsSorted[0];
-    if (source) {
-      const stars = CODE_TO_STARS(source.axm365_raiting as number | undefined);
-      setEditRating(stars);
-      setEditTechnique(source.axm365_technique ?? DEFAULT_ATTR_FOR_RATING[stars]);
-      setEditEffort(source.axm365_effort ?? DEFAULT_ATTR_FOR_RATING[stars]);
-      setEditTactical(source.axm365_tacticalawareness ?? DEFAULT_ATTR_FOR_RATING[stars]);
-      setEditTeamPlay(source.axm365_teamplay ?? DEFAULT_ATTR_FOR_RATING[stars]);
-      setEditNotes(source.axm365_notes ?? "");
-    } else {
-      setEditRating(2);
-      setEditTechnique(30);
-      setEditEffort(30);
-      setEditTactical(30);
-      setEditTeamPlay(30);
-      setEditNotes("");
-    }
+    setEditSkills(skillValuesFromPerformance(source));
+    setEditNotes(source?.axm365_notes ?? "");
+    // Parent feedback always starts empty: every save here creates a new
+    // record, so carrying the previous text over would post it twice.
+    setEditParentFeedback("");
   }, [editEventId, selectedId, showEditModal, performances, playerPerfsSorted]);
-
-  const handleEditRatingChange = (stars: number) => {
-    const def = DEFAULT_ATTR_FOR_RATING[stars] ?? 50;
-    setEditRating(stars);
-    setEditTechnique(def);
-    setEditEffort(def);
-    setEditTactical(def);
-    setEditTeamPlay(def);
-  };
-
-  const handleTechChange = (v: number) => { setEditTechnique(v); setEditRating(recalcRating(v, editEffort, editTactical, editTeamPlay)); };
-  const handleEffortChange = (v: number) => { setEditEffort(v); setEditRating(recalcRating(editTechnique, v, editTactical, editTeamPlay)); };
-  const handleTacticalChange = (v: number) => { setEditTactical(v); setEditRating(recalcRating(editTechnique, editEffort, v, editTeamPlay)); };
-  const handleTeamPlayChange = (v: number) => { setEditTeamPlay(v); setEditRating(recalcRating(editTechnique, editEffort, editTactical, v)); };
 
   const savePlayerPerformance = async () => {
     if (!selectedId) return;
@@ -561,19 +586,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     setPerfSaveError(null);
     try {
       const selectedEvent = editEventId ? events.find((e) => e.axm365_eventid === editEventId) : undefined;
-      const ratingCode = 693080000 + (editRating - 1);
       // Always creates a new record — never overwrites a prior one — so the full
       // performance history is preserved for the "most recent" display.
       const res = await runDataverseWrite(
         "Creating player performance",
         () => Axm365_playereventperformancesService.create({
           axm365_performancename: `${playerName} - ${selectedEvent?.axm365_name ?? "General"}`,
-          axm365_raiting: ratingCode as any,
-          axm365_technique: editTechnique,
-          axm365_effort: editEffort,
-          axm365_tacticalawareness: editTactical,
-          axm365_teamplay: editTeamPlay,
+          axm365_raiting: starsToCode(ratingFromSkills(editSkills)) as any,
+          ...skillPayload(editSkills),
           axm365_notes: editNotes,
+          [PARENT_FEEDBACK_FIELD]: editParentFeedback.trim() || null,
           "axm365_cr9be_Player@odata.bind": `/cr9be_players(${selectedId})`,
           ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
         } as any)
@@ -773,9 +795,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     onUploaded={() => refreshPlayers().catch(() => {})}
                   />
                   <div>
-                    <div style={{ fontFamily: displayStack, fontSize: 19, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em" }}>{playerName}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-                      <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em" }}>{playerPos ? `${playerPos} · ` : ""}#{playerNum}</div>
+                    <div style={{ fontFamily: displayStack, fontSize: 21, fontWeight: 800, color: COLORS.navy, letterSpacing: "-0.01em", lineHeight: 1.1 }}>{playerName}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.12em" }}>#{playerNum}</div>
+                      {playerPos && (
+                        <span style={{ background: COLORS.navy, color: "#fff", borderRadius: 99, padding: "2px 8px", fontFamily: monoStack, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.1em" }}>
+                          {playerPos}
+                        </span>
+                      )}
                       <button
                         onClick={openEditPlayerModal}
                         style={{ width: 19, height: 19, borderRadius: 6, background: COLORS.cream, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
@@ -785,12 +812,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     </div>
                   </div>
                   <div style={{ marginLeft: "auto", position: "relative", textAlign: "right" }}>
-                    <div style={{ fontFamily: displayStack, fontWeight: 900, fontSize: 32, color: COLORS.navy, lineHeight: 1 }}>{latestRatingStars}.0</div>
+                    <div style={{ fontFamily: displayStack, fontWeight: 900, fontSize: 32, color: COLORS.navy, lineHeight: 1 }}>{formatRating(latestRating)}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9, letterSpacing: "0.14em", color: COLORS.mute, textAlign: "right", marginTop: 2 }}>LATEST RATING</div>
                     {ratingChange !== null && ratingChange !== 0 && (
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 3, marginTop: 4, fontFamily: monoStack, fontSize: 10.5, fontWeight: 700, color: ratingChange > 0 ? COLORS.green : COLORS.red }}>
                         {ratingChange > 0 ? <ArrowUp size={11} strokeWidth={3} /> : <ArrowDown size={11} strokeWidth={3} />}
-                        {ratingChange > 0 ? `+${ratingChange}` : ratingChange}
+                        {formatRatingChange(ratingChange)}
                       </div>
                     )}
                   </div>
@@ -899,11 +926,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
 
                 <div style={{ marginTop: 14, position: "relative" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", gap: 5 }}>
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <Star key={n} size={18} color={n <= latestRatingStars ? COLORS.yellow : COLORS.line} fill={n <= latestRatingStars ? COLORS.yellow : "none"} strokeWidth={2} />
-                      ))}
-                    </div>
+                    <RatingStars rating={latestRating} />
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, background: hasData ? COLORS.yellowSoft : COLORS.cream, border: `1px solid ${hasData ? COLORS.yellow : COLORS.line}`, borderRadius: 99, padding: "4px 10px" }}>
                         <span style={{ fontFamily: monoStack, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.12em", color: COLORS.navy }}>
@@ -912,9 +935,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                       </div>
                       <button
                         onClick={openEditModal}
-                        style={{ width: 30, height: 30, borderRadius: 10, background: COLORS.navy, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                        style={{ width: 40, height: 40, borderRadius: 12, background: COLORS.navy, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
                       >
-                        <Pencil size={13} color={COLORS.yellow} strokeWidth={2} />
+                        <Pencil size={15} color={COLORS.yellow} strokeWidth={2} />
                       </button>
                     </div>
                   </div>
@@ -924,49 +947,149 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           )}
 
           <div style={{ padding: "18px 22px 30px" }}>
-            <SectionTitle eyebrow="Latest Performance" title="Attributes" />
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-              <AttributeBar label="Technique" value={latestTechnique} />
-              <AttributeBar label="Effort" value={latestEffort} />
-              <AttributeBar label="Tactical Awareness" value={latestTactical} />
-              <AttributeBar label="Team Play" value={latestTeamPlay} />
+            <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>
+              Latest Performance
             </div>
 
-            {/* Latest coach's note — only the single most recent one, matching the
-                "Latest" scope used by the rating and attribute bars above. */}
-            {latestNotes && (
-              <div style={{ marginTop: 18 }}>
-                <SectionTitle eyebrow="Latest Performance" title="Coach's Note" />
-                <div
-                  style={{
-                    marginTop: 12,
-                    background: COLORS.cream,
-                    border: `1px solid ${COLORS.line}`,
-                    borderRadius: 14,
-                    padding: 14,
-                  }}
-                >
-                  <div style={{ fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
-                    {latestNotes}
-                  </div>
-                  {latestPerf?.createdon && (
+            {/* Attributes / Parent feedback switch */}
+            <div style={{ marginTop: 10, display: "flex", gap: 4, padding: 4, background: COLORS.line, borderRadius: 14 }}>
+              {([
+                { id: "attributes", label: "Attributes" },
+                { id: "feedback", label: "Parent feedback" },
+              ] as const).map((tab) => {
+                const active = perfTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setPerfTab(tab.id)}
+                    style={{ flex: 1, padding: "10px 0", borderRadius: 11, border: 0, background: active ? COLORS.navy : "transparent", color: active ? "#fff" : COLORS.navy, boxShadow: active ? "0 2px 8px rgba(11,27,61,0.18)" : "none", fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    {tab.label}
+                    {tab.id === "attributes" && (
+                      <span style={{ fontFamily: monoStack, fontSize: 9.5, opacity: 0.7, alignSelf: "flex-start", marginTop: 1 }}>{PERFORMANCE_SKILLS.length}</span>
+                    )}
+                    {tab.id === "feedback" && latestFeedback && (
+                      <span style={{ width: 7, height: 7, borderRadius: 99, background: active ? COLORS.yellow : "#E0A800" }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {perfTab === "attributes" && (
+              <>
+                <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                  {PERFORMANCE_SKILLS.map((skill) => (
+                    <AttributeBar
+                      key={skill.key}
+                      label={skillLabel(skill, playerPos)}
+                      value={latestPerf ? readSkill(latestPerf, skill) : null}
+                    />
+                  ))}
+                </div>
+
+                {/* Latest coach's note — only the single most recent one, matching the
+                    "Latest" scope used by the rating and attribute bars above. */}
+                {latestNotes && (
+                  <div style={{ marginTop: 18 }}>
+                    <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>
+                      Coach Notes · Internal
+                    </div>
                     <div
                       style={{
-                        fontFamily: monoStack,
-                        fontSize: 9.5,
-                        color: COLORS.mute,
-                        letterSpacing: "0.1em",
-                        marginTop: 8,
+                        marginTop: 10,
+                        background: COLORS.cream,
+                        border: `1px solid ${COLORS.line}`,
+                        borderRadius: 14,
+                        padding: 14,
                       }}
                     >
-                      {new Date(latestPerf.createdon).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
+                      <div style={{ fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                        {latestNotes}
+                      </div>
+                      {latestPerf?.createdon && (
+                        <div
+                          style={{
+                            fontFamily: monoStack,
+                            fontSize: 9.5,
+                            color: COLORS.mute,
+                            letterSpacing: "0.1em",
+                            marginTop: 8,
+                          }}
+                        >
+                          {new Date(latestPerf.createdon).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {perfTab === "feedback" && (
+              <div style={{ marginTop: 16 }}>
+                {!latestFeedback && (
+                  <div style={{ background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: 20, textAlign: "center", fontFamily: fontStack, fontSize: 13, color: COLORS.mute, lineHeight: 1.5 }}>
+                    No feedback shared with the parent yet. Add it from Edit Performance.
+                  </div>
+                )}
+
+                {latestFeedback && (
+                  <div style={{ background: COLORS.navy, borderRadius: 22, padding: 18, color: "#fff" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: COLORS.yellow, color: COLORS.navy, borderRadius: 99, padding: "4px 10px", fontFamily: monoStack, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em" }}>
+                        <Eye size={12} strokeWidth={2.2} />
+                        VISIBLE TO PARENT
+                      </span>
+                      <span style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.1em", color: "rgba(255,255,255,0.7)" }}>
+                        {feedbackMeta(latestFeedback)}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 14, fontFamily: fontStack, fontSize: 14.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                      {parentFeedbackOf(latestFeedback)}
+                    </div>
+                    <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.14)", display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 99, background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: fontStack, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                        {feedbackAuthor(latestFeedback).charAt(0).toUpperCase()}
+                      </div>
+                      <span style={{ fontFamily: fontStack, fontSize: 12.5, color: "rgba(255,255,255,0.75)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {feedbackAuthor(latestFeedback)} · Coach{playerGenerationName ? ` ${playerGenerationName}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {earlierFeedback.length > 0 && (
+                  <div style={{ marginTop: 18 }}>
+                    <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>
+                      Earlier Feedback
+                    </div>
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {earlierFeedback.map((perf) => {
+                        const id = perf.axm365_playereventperformanceid;
+                        const expanded = expandedFeedbackId === id;
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => setExpandedFeedbackId(expanded ? null : id)}
+                            style={{ width: "100%", textAlign: "left", background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer" }}
+                          >
+                            <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.1em", color: COLORS.mute }}>
+                              {feedbackMeta(perf)}
+                            </div>
+                            <div style={{ marginTop: 4, fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.5, whiteSpace: "pre-wrap", ...(expanded ? {} : lineClamp(2)) }}>
+                              {parentFeedbackOf(perf)}
+                            </div>
+                          </button>
+                        );
                       })}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1002,7 +1125,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>
-                      {editEventId ? (events.find((e) => e.axm365_eventid === editEventId)?.axm365_name ?? "Event") : "No Event"} · Edit Performance
+                      #{playerNum}{playerPos ? ` · ${playerPos}` : ""} · Edit Performance
                     </div>
                   </div>
                   <button
@@ -1101,55 +1224,17 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   )}
                 </div>
 
-                {/* Rating */}
-                <div>
-                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
-                    Overall Rating
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => handleEditRatingChange(n)}
-                        style={{ width: 42, height: 42, borderRadius: 12, border: 0, background: n <= editRating ? COLORS.yellow : "#F3F0E5", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                      >
-                        <Star size={19} color={n <= editRating ? COLORS.navy : COLORS.mute} fill={n <= editRating ? COLORS.navy : "none"} strokeWidth={2} />
-                      </button>
-                    ))}
-                    <div style={{ marginLeft: "auto", fontFamily: displayStack, fontWeight: 800, fontSize: 28, color: COLORS.navy }}>{editRating}.0</div>
-                  </div>
-                  <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.1em", marginTop: 6 }}>
-                    Changing rating resets sliders · Sliders update rating automatically
-                  </div>
-                </div>
-
-                {/* Sliders */}
-                <div>
-                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 12 }}>
-                    Attributes
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <AttributeSlider label="Technique" value={editTechnique} onChange={handleTechChange} />
-                    <AttributeSlider label="Effort" value={editEffort} onChange={handleEffortChange} />
-                    <AttributeSlider label="Tactical Awareness" value={editTactical} onChange={handleTacticalChange} />
-                    <AttributeSlider label="Team Play" value={editTeamPlay} onChange={handleTeamPlayChange} />
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div>
-                  <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
-                    Notes
-                  </div>
-                  <div style={{ background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: 12 }}>
-                    <textarea
-                      value={editNotes}
-                      onChange={(e) => setEditNotes(e.target.value)}
-                      placeholder={`Notes for ${playerName}…`}
-                      style={{ width: "100%", minHeight: 70, border: 0, outline: 0, fontFamily: fontStack, fontSize: 13, color: COLORS.ink, lineHeight: 1.55, resize: "vertical", background: "transparent" }}
-                    />
-                  </div>
-                </div>
+                <PerformanceEditorFields
+                  ratingLabel="Overall Rating"
+                  playerName={playerName}
+                  positionName={playerPos}
+                  skills={editSkills}
+                  onSkillsChange={setEditSkills}
+                  notes={editNotes}
+                  onNotesChange={setEditNotes}
+                  parentFeedback={editParentFeedback}
+                  onParentFeedbackChange={setEditParentFeedback}
+                />
 
                 {/* Save button */}
                 <button

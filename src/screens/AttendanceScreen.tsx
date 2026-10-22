@@ -7,7 +7,6 @@ import {
   Check,
   X,
   RefreshCw,
-  Star,
   ChevronDown,
   Search,
 } from "lucide-react";
@@ -27,17 +26,29 @@ import {
   ErrorBanner,
   PlayerAvatar,
   StaleDataNotice,
+  PerformanceEditorFields,
 } from "../components/shared";
 import {
   Tally,
   MarkBtn,
   SuccessBanner,
-  AttributeSlider,
+  RatingStars,
 } from "../components/ui";
 import { useData, PLAYER_ATTENDANCE_FIELDS } from "../context/DataContext";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
 import { lookupName, unwrap } from "../utils/dataverse";
 import { isEventActive } from "../utils/eventStatus";
+import {
+  DEFAULT_STARS,
+  PARENT_FEEDBACK_FIELD,
+  parentFeedbackOf,
+  performanceRating,
+  ratingFromSkills,
+  skillPayload,
+  skillValuesFromPerformance,
+  starsToCode,
+  type SkillValues,
+} from "../utils/performanceSkills";
 
 type AttendanceMark = "present" | "late" | "absent";
 
@@ -45,23 +56,6 @@ const CLOCK_STORAGE_KEY = "coach_clock_session";
 
 const normalizeGuid = (value?: string | null): string =>
   (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
-
-const RATING_DEFAULTS: Record<number, number> = {
-  1: 10,
-  2: 30,
-  3: 50,
-  4: 70,
-  5: 90,
-};
-
-const CODE_TO_STARS = (code?: number): number =>
-  code !== undefined ? (code as number) - 693080000 + 1 : 2;
-
-const recalcRating = (t: number, e: number, ta: number, tp: number): number => {
-  const avg = (t + e + ta + tp) / 4;
-
-  return avg < 20 ? 1 : avg < 40 ? 2 : avg < 60 ? 3 : avg < 80 ? 4 : 5;
-};
 
 interface AttendanceScreenProps {
   go: (id: ScreenId) => void;
@@ -233,12 +227,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const [perfEditPlayerId, setPerfEditPlayerId] = useState<string | null>(null);
 
-  const [editRating, setEditRating] = useState(2);
-  const [editTechnique, setEditTechnique] = useState(30);
-  const [editEffort, setEditEffort] = useState(30);
-  const [editTactical, setEditTactical] = useState(30);
-  const [editTeamPlay, setEditTeamPlay] = useState(30);
+  const [editSkills, setEditSkills] = useState<SkillValues>(() =>
+    skillValuesFromPerformance()
+  );
   const [editNotes, setEditNotes] = useState("");
+  const [editParentFeedback, setEditParentFeedback] = useState("");
 
   const [perfSaving, setPerfSaving] = useState(false);
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
@@ -474,32 +467,13 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         p._axm365_event_value === selectedEventId
     );
 
-    if (existing) {
-      const stars = CODE_TO_STARS(
-        existing.axm365_raiting as number | undefined
-      );
+    // Saving here updates this event's record in place, so its parent
+    // feedback is loaded for editing too.
+    setEditSkills(skillValuesFromPerformance(existing));
 
-      setEditRating(stars);
+    setEditNotes(existing?.axm365_notes ?? "");
 
-      setEditTechnique(existing.axm365_technique ?? RATING_DEFAULTS[stars]);
-
-      setEditEffort(existing.axm365_effort ?? RATING_DEFAULTS[stars]);
-
-      setEditTactical(
-        existing.axm365_tacticalawareness ?? RATING_DEFAULTS[stars]
-      );
-
-      setEditTeamPlay(existing.axm365_teamplay ?? RATING_DEFAULTS[stars]);
-
-      setEditNotes(existing.axm365_notes ?? "");
-    } else {
-      setEditRating(2);
-      setEditTechnique(30);
-      setEditEffort(30);
-      setEditTactical(30);
-      setEditTeamPlay(30);
-      setEditNotes("");
-    }
+    setEditParentFeedback(parentFeedbackOf(existing));
 
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
@@ -561,44 +535,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   }, [coachId]);
 
   // ============================================================
-  // PERFORMANCE RATING HANDLERS
-  // ============================================================
-
-  const handleEditRatingChange = (stars: number) => {
-    const def = RATING_DEFAULTS[stars] ?? 50;
-
-    setEditRating(stars);
-    setEditTechnique(def);
-    setEditEffort(def);
-    setEditTactical(def);
-    setEditTeamPlay(def);
-  };
-
-  const handleTechChange = (v: number) => {
-    setEditTechnique(v);
-
-    setEditRating(recalcRating(v, editEffort, editTactical, editTeamPlay));
-  };
-
-  const handleEffortChange = (v: number) => {
-    setEditEffort(v);
-
-    setEditRating(recalcRating(editTechnique, v, editTactical, editTeamPlay));
-  };
-
-  const handleTacticalChange = (v: number) => {
-    setEditTactical(v);
-
-    setEditRating(recalcRating(editTechnique, editEffort, v, editTeamPlay));
-  };
-
-  const handleTeamPlayChange = (v: number) => {
-    setEditTeamPlay(v);
-
-    setEditRating(recalcRating(editTechnique, editEffort, editTactical, v));
-  };
-
-  // ============================================================
   // SAVE PERFORMANCE
   // ============================================================
 
@@ -630,24 +566,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         (e) => e.axm365_eventid === selectedEventId
       );
 
-      const ratingCode = 693080000 + (editRating - 1);
-
       const payload = {
         axm365_performancename: `${perfPlayer?.cr9be_name ?? "Player"} - ${
           selectedEvent?.axm365_name ?? "Event"
         }`,
 
-        axm365_raiting: ratingCode as any,
+        axm365_raiting: starsToCode(ratingFromSkills(editSkills)) as any,
 
-        axm365_technique: editTechnique,
-
-        axm365_effort: editEffort,
-
-        axm365_tacticalawareness: editTactical,
-
-        axm365_teamplay: editTeamPlay,
+        ...skillPayload(editSkills),
 
         axm365_notes: editNotes,
+
+        [PARENT_FEEDBACK_FIELD]: editParentFeedback.trim() || null,
       };
 
       if (existing) {
@@ -1743,10 +1673,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                   );
 
                   const perfRating = existingPerf
-                    ? CODE_TO_STARS(
-                        existingPerf.axm365_raiting as number | undefined
-                      )
-                    : 2;
+                    ? performanceRating(existingPerf)
+                    : DEFAULT_STARS;
 
                   const isAbsent = marks[playerId] === "absent";
 
@@ -1839,22 +1767,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
                           <div
                             style={{
-                              display: "flex",
-                              gap: 2,
                               marginTop: 4,
                             }}
                           >
-                            {[1, 2, 3, 4, 5].map((n) => (
-                              <Star
-                                key={n}
-                                size={11}
-                                color={
-                                  n <= perfRating ? COLORS.yellow : COLORS.line
-                                }
-                                fill={n <= perfRating ? COLORS.yellow : "none"}
-                                strokeWidth={1.5}
-                              />
-                            ))}
+                            <RatingStars
+                              rating={perfRating}
+                              size={11}
+                              gap={2}
+                              strokeWidth={1.5}
+                            />
                           </div>
                         </div>
                       </div>
@@ -2699,179 +2620,18 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                     </div>
                   )}
 
-                  <div>
-                    <div
-                      style={{
-                        fontFamily: monoStack,
-                        fontSize: 10,
-                        letterSpacing: "0.18em",
-                        color: COLORS.mute,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        marginBottom: 10,
-                      }}
-                    >
-                      Session Rating
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "center",
-                        opacity: locked ? 0.5 : 1,
-                        pointerEvents: locked ? "none" : undefined,
-                      }}
-                    >
-                      {[1, 2, 3, 4, 5].map((n) => (
-                        <button
-                          key={n}
-                          onClick={() => handleEditRatingChange(n)}
-                          style={{
-                            width: 42,
-                            height: 42,
-                            borderRadius: 12,
-                            border: 0,
-                            background:
-                              n <= editRating ? COLORS.yellow : "#F3F0E5",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Star
-                            size={19}
-                            color={n <= editRating ? COLORS.navy : COLORS.mute}
-                            fill={n <= editRating ? COLORS.navy : "none"}
-                            strokeWidth={2}
-                          />
-                        </button>
-                      ))}
-
-                      <div
-                        style={{
-                          marginLeft: "auto",
-                          fontFamily: displayStack,
-                          fontWeight: 800,
-                          fontSize: 28,
-                          color: COLORS.navy,
-                        }}
-                      >
-                        {editRating}
-                        .0
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        fontFamily: monoStack,
-                        fontSize: 9.5,
-                        color: COLORS.mute,
-                        letterSpacing: "0.1em",
-                        marginTop: 6,
-                      }}
-                    >
-                      Changing rating resets sliders · Sliders update rating
-                      automatically
-                    </div>
-                  </div>
-
-                  <div>
-                    <div
-                      style={{
-                        fontFamily: monoStack,
-                        fontSize: 10,
-                        letterSpacing: "0.18em",
-                        color: COLORS.mute,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        marginBottom: 12,
-                      }}
-                    >
-                      Attributes
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 14,
-                        opacity: locked ? 0.5 : 1,
-                        pointerEvents: locked ? "none" : undefined,
-                      }}
-                    >
-                      <AttributeSlider
-                        label="Technique"
-                        value={editTechnique}
-                        onChange={handleTechChange}
-                      />
-
-                      <AttributeSlider
-                        label="Effort"
-                        value={editEffort}
-                        onChange={handleEffortChange}
-                      />
-
-                      <AttributeSlider
-                        label="Tactical Awareness"
-                        value={editTactical}
-                        onChange={handleTacticalChange}
-                      />
-
-                      <AttributeSlider
-                        label="Team Play"
-                        value={editTeamPlay}
-                        onChange={handleTeamPlayChange}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div
-                      style={{
-                        fontFamily: monoStack,
-                        fontSize: 10,
-                        letterSpacing: "0.18em",
-                        color: COLORS.mute,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        marginBottom: 10,
-                      }}
-                    >
-                      Notes
-                    </div>
-
-                    <div
-                      style={{
-                        background: COLORS.cream,
-                        border: `1px solid ${COLORS.line}`,
-                        borderRadius: 14,
-                        padding: 12,
-                      }}
-                    >
-                      <textarea
-                        value={editNotes}
-                        onChange={(e) => setEditNotes(e.target.value)}
-                        disabled={locked}
-                        placeholder={`Notes for ${
-                          perfEditPlayer?.cr9be_name ?? "player"
-                        }…`}
-                        style={{
-                          width: "100%",
-                          minHeight: 70,
-                          border: 0,
-                          outline: 0,
-                          fontFamily: fontStack,
-                          fontSize: 13,
-                          color: COLORS.ink,
-                          lineHeight: 1.55,
-                          resize: "vertical",
-                          background: "transparent",
-                        }}
-                      />
-                    </div>
-                  </div>
+                  <PerformanceEditorFields
+                    ratingLabel="Session Rating"
+                    playerName={perfEditPlayer?.cr9be_name ?? "Player"}
+                    positionName={lookupName(perfEditPlayer, "cr9be_position")}
+                    skills={editSkills}
+                    onSkillsChange={setEditSkills}
+                    notes={editNotes}
+                    onNotesChange={setEditNotes}
+                    parentFeedback={editParentFeedback}
+                    onParentFeedbackChange={setEditParentFeedback}
+                    disabled={locked}
+                  />
 
                   {locked && (
                     <ErrorBanner message={LOCKED_MESSAGE} />

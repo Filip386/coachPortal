@@ -1,4 +1,5 @@
 import React from "react";
+import { Star, StarHalf } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../../constants/design";
 
 export const Stat: React.FC<{ label: string; value: string; warn?: boolean }> = ({ label, value, warn }) => (
@@ -100,22 +101,44 @@ export const Chip: React.FC<{ children: React.ReactNode; yellow?: boolean }> = (
   </span>
 );
 
-export const AttributeBar: React.FC<{ label: string; value: number }> = ({ label, value }) => (
+// A null value means the skill was never scored (e.g. a record saved before
+// that skill existed) — shown as a dash rather than a made-up number.
+export const AttributeBar: React.FC<{ label: string; value: number | null }> = ({ label, value }) => (
   <div>
     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
       <span style={{ fontSize: 12.5, color: COLORS.navy, fontWeight: 600 }}>{label}</span>
-      <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: COLORS.navy }}>{value}</span>
+      <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: value === null ? COLORS.mute : COLORS.navy }}>{value ?? "—"}</span>
     </div>
     <div style={{ height: 8, background: "#F3F0E5", borderRadius: 99, overflow: "hidden" }}>
-      <div style={{ height: "100%", width: `${value}%`, background: `linear-gradient(90deg, ${COLORS.navy}, ${COLORS.yellow})`, borderRadius: 99 }} />
+      <div style={{ height: "100%", width: `${value ?? 0}%`, background: `linear-gradient(90deg, ${COLORS.navy}, ${COLORS.yellow})`, borderRadius: 99 }} />
     </div>
   </div>
 );
 
-export const AttributeSlider: React.FC<{ label: string; value: number; onChange: (v: number) => void }> = ({ label, value, onChange }) => (
+export const RatingStars: React.FC<{ rating: number; size?: number; gap?: number; strokeWidth?: number }> = ({ rating, size = 18, gap = 5, strokeWidth = 2 }) => (
+  <div style={{ display: "flex", gap }}>
+    {[1, 2, 3, 4, 5].map((n) => {
+      const full = rating >= n;
+      const half = !full && rating >= n - 0.5;
+      return (
+        <span key={n} style={{ position: "relative", display: "inline-flex", width: size, height: size }}>
+          <Star size={size} color={full ? COLORS.yellow : COLORS.line} fill={full ? COLORS.yellow : "none"} strokeWidth={strokeWidth} />
+          {half && <StarHalf size={size} color={COLORS.yellow} fill={COLORS.yellow} strokeWidth={strokeWidth} style={{ position: "absolute", inset: 0 }} />}
+        </span>
+      );
+    })}
+  </div>
+);
+
+export const AttributeSlider: React.FC<{ label: string; description?: string; value: number; onChange: (v: number) => void }> = ({ label, description, value, onChange }) => (
   <div>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, alignItems: "center" }}>
-      <span style={{ fontSize: 12.5, color: COLORS.navy, fontWeight: 600, fontFamily: fontStack }}>{label}</span>
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, alignItems: description ? "flex-start" : "center", gap: 10 }}>
+      <div style={{ minWidth: 0 }}>
+        <span style={{ fontSize: 12.5, color: COLORS.navy, fontWeight: 600, fontFamily: fontStack }}>{label}</span>
+        {description && (
+          <div style={{ fontSize: 11, color: COLORS.mute, fontFamily: fontStack, lineHeight: 1.35, marginTop: 1 }}>{description}</div>
+        )}
+      </div>
       <span style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 14, color: COLORS.navy, minWidth: 26, textAlign: "right" }}>{value}</span>
     </div>
     <div style={{ position: "relative", height: 24, display: "flex", alignItems: "center" }}>

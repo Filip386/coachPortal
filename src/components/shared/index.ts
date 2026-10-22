@@ -7,4 +7,5 @@ export { BottomNav } from "./BottomNav";
 export { SectionTitle } from "./SectionTitle";
 export { ActionTile } from "./ActionTile";
 export { PlayerAvatar } from "./PlayerAvatar";
+export { PerformanceEditorFields } from "./PerformanceEditorFields";
 export { StaleDataNotice } from "./StaleDataNotice.tsx";

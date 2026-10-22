@@ -26,7 +26,7 @@ The app gives a coach a single interface to:
 
 - See today's session and upcoming events on a dashboard
 - Mark attendance (present / late / absent) for each player per event
-- Rate player performance across four attributes: **Technique, Effort, Tactical, Teamplay**
+- Rate player performance across seven skills: **Technique, Tactical Awareness, Decision-Making, Effort & Work Rate, Team Play, Position Skills, Attitude & Coachability** — plus internal coach notes and feedback for the parent
 - Browse the squad filtered by position or generation (birth year cohort)
 - Create new training sessions and matches with automatic title generation
 - View all overdue invoices grouped by billed contact (currency: MKD)
@@ -110,7 +110,7 @@ Dashboard that loads first. Shows today's event card, total active players, over
 Monthly calendar grid. Tap a date to see its events. From an event, navigate directly to Attendance for that session.
 
 ### Attendance
-Lists all players for a selected event. Each row has a **Present / Late / Absent** toggle. After marking attendance the coach can also rate four performance dimensions (1–5 stars) per player. Writes to `axm365_eventattendances` and `axm365_playereventperformances` in Dataverse.
+Lists all players for a selected event. Each row has a **Present / Late / Absent** toggle. After marking attendance the coach can also score seven skills (0–100) per player, add internal notes and write feedback for the parent; the 1–5 star rating is the half-star average of the skills (see `src/utils/performanceSkills.ts`). Writes to `axm365_eventattendances` and `axm365_playereventperformances` in Dataverse.
 
 ### Players
 Full squad list with live search and filters for **position** and **generation**. Average star rating shown per player. Tap a player to jump to their Performance screen.
