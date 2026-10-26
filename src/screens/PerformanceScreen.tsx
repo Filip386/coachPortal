@@ -210,6 +210,19 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     );
   }, [coachId, players, allGenerations, generationsToCoaches]);
 
+  // Centre the active generation chip when the selection (or the strip itself)
+  // changes. Only the strip scrolls: scrollIntoView also scrolls the page, and
+  // running it from an inline ref fired it on every render, so each keystroke
+  // in the edit modal jumped the screen away from the field being typed in.
+  const generationStripRef = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = generationStripRef.current;
+    const chip = strip?.querySelector<HTMLElement>("[data-active]");
+    if (!strip || !chip) return;
+    const chipLeft = chip.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+    strip.scrollBy({ left: chipLeft - (strip.clientWidth - chip.offsetWidth) / 2, behavior: "smooth" });
+  }, [selectedGenId, generationTabs, screenLoading, screenLoadError]);
+
   const coachPlayers = useMemo(() => {
     if (!coachId || generationTabs.length === 0) return players;
     const filtered = players.filter((player) =>
@@ -493,8 +506,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const latestPerf = playerPerfsSorted[0];
   const previousPerf = playerPerfsSorted[1];
 
-  // Ratings are the half-star average of the seven skills; older records keep
-  // the rating they were saved with (see performanceRating).
+  // Ratings are the half-star average of the recorded skills, so the number
+  // on the card always agrees with the attribute bars below it.
   const latestRating = latestPerf ? performanceRating(latestPerf) : DEFAULT_STARS;
   const previousRating = previousPerf ? performanceRating(previousPerf) : null;
   const ratingChange = previousRating !== null ? latestRating - previousRating : null;
@@ -699,7 +712,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         <>
           {/* Generation filter */}
           {generationTabs.length > 0 && (
-            <div style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
+            <div ref={generationStripRef} style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
               {[{ id: "all", name: "ALL" }, ...generationTabs].map((tab) => {
                 const active = tab.id === "all"
                   ? selectedGenId === "all"
@@ -707,7 +720,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                 return (
                   <button
                     key={tab.id}
-                    ref={(el) => { if (active && el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" }); }}
+                    data-active={active || undefined}
                     onClick={() => {
                       setSelectedGenId(tab.id);
                       const first = (tab.id === "all"
