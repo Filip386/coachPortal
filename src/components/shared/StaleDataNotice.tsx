@@ -2,10 +2,6 @@ import React from "react";
 import { RefreshCw } from "lucide-react";
 import { COLORS, fontStack } from "../../constants/design";
 
-/**
- * Non-blocking feedback for a failed background refresh. The screen keeps
- * rendering its cached data while DataContext retries quietly.
- */
 export const StaleDataNotice: React.FC = () => (
   <div
     role="status"

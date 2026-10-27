@@ -1,36 +1,49 @@
-/* eslint-disable */
 import React, { useState, useMemo, useEffect } from "react";
 import { RefreshCw, ChevronDown, User, Search } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
+import type { Invoices } from "../generated/models/InvoicesModel";
 import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { PillStat } from "../components/ui";
 import { useData } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
 import { lookupName } from "../utils/dataverse";
+import { initialsOf } from "../utils/names";
 
 interface InvoicesScreenProps {
   go: (id: ScreenId) => void;
   goBack?: () => void;
 }
 
-const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
+interface InvoiceContact {
+  key: string;
+  name: string;
+}
 
-// The contact an invoice is billed to. The display name usually arrives as the
-// OData formatted-value annotation, not the plain *name field. Keyed by id when
-// available so the same contact groups together across invoices.
-const fmtVal = (inv: any, key: string): string | undefined =>
-  inv[`${key}@OData.Community.Display.V1.FormattedValue`];
-const invoiceContact = (inv: any): { key: string; name: string } => {
-  const id = (inv._contactid_value as string) || (inv._customerid_value as string) || (inv.customerid as string) || "";
+const MS_PER_DAY = 86_400_000;
+
+const normalizeName = (name?: string | null) => (name ?? "").trim().toLowerCase();
+
+const formatMkd = (amount: number) => `${Number(amount).toLocaleString()} MKD`;
+
+const daysSince = (date: string): number => Math.floor((Date.now() - new Date(date).getTime()) / MS_PER_DAY);
+
+const invoiceFields = (invoice: Invoices) => invoice as unknown as Record<string, string | undefined>;
+
+const formattedValue = (invoice: Invoices, field: string): string | undefined =>
+  invoiceFields(invoice)[`${field}@OData.Community.Display.V1.FormattedValue`];
+
+const invoiceContact = (invoice: Invoices): InvoiceContact => {
+  const fields = invoiceFields(invoice);
+  const id = fields._contactid_value || fields._customerid_value || fields.customerid || "";
   const name =
-    lookupName(inv, "contactid") ||
-    lookupName(inv, "customerid") ||
-    fmtVal(inv, "_customerid_value") ||
-    fmtVal(inv, "customerid") ||
-    inv.name ||
+    lookupName(invoice, "contactid") ||
+    lookupName(invoice, "customerid") ||
+    formattedValue(invoice, "_customerid_value") ||
+    formattedValue(invoice, "customerid") ||
+    invoice.name ||
     "Unknown";
-  return { key: id || `name:${norm(name)}`, name };
+  return { key: id || `name:${normalizeName(name)}`, name };
 };
 
 export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) => {
@@ -54,26 +67,11 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
     setRefreshing(false);
   };
 
-  // Only overdue invoices are shown.
   const overdueInvoices = useMemo(
     () => invoices.filter((inv) => getInvoiceStatus(inv) === "Overdue"),
     [invoices]
   );
 
-  // TEMP DEBUG — shows which contact/customer fields the invoice actually has.
-  useEffect(() => {
-    if (overdueInvoices.length === 0) return;
-    const s: any = overdueInvoices[0];
-    const rel = Object.fromEntries(
-      Object.entries(s).filter(([k]) => /contact|customer/i.test(k))
-    );
-    // eslint-disable-next-line no-console
-    console.log("[INVOICE DEBUG] first overdue invoice contact/customer fields:", rel);
-    // eslint-disable-next-line no-console
-    console.log("[INVOICE DEBUG] all keys:", Object.keys(s));
-  }, [overdueInvoices]);
-
-  // Distinct contacts drawn from the overdue invoices themselves.
   const contacts = useMemo(() => {
     const byKey = new Map<string, string>();
     overdueInvoices.forEach((inv) => {
@@ -85,11 +83,11 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
     );
   }, [overdueInvoices]);
 
-  const filtered =
+  const visibleInvoices =
     selectedContactKey === "all"
       ? overdueInvoices
       : overdueInvoices.filter((inv) => invoiceContact(inv).key === selectedContactKey);
-  const totalOverdue = filtered.reduce((sum, i) => sum + (i.totalamount ?? 0), 0);
+  const totalOverdue = visibleInvoices.reduce((sum, i) => sum + (i.totalamount ?? 0), 0);
 
   const selectedContactName =
     selectedContactKey === "all"
@@ -99,11 +97,6 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
   const contactOptions = [{ key: "all", name: "All Contacts" }, ...contacts].filter((opt) =>
     opt.name.toLowerCase().includes(contactSearch.toLowerCase())
   );
-
-  const getInitials = (name: string) =>
-    name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-
-  const money = (n: number) => `${Number(n).toLocaleString()} MKD`;
 
   return (
     <>
@@ -140,12 +133,11 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
                 <span style={{ fontSize: 16, opacity: 0.6, fontWeight: 600 }}> MKD</span>
               </div>
               <div style={{ display: "flex", gap: 14, marginTop: 18 }}>
-                <PillStat color={COLORS.red} label="Overdue" value={filtered.length} />
+                <PillStat color={COLORS.red} label="Overdue" value={visibleInvoices.length} />
               </div>
             </div>
           </div>
 
-          {/* Contact filter */}
           <div style={{ padding: "20px 22px 0" }}>
             <div style={{ position: "relative" }}>
               <button
@@ -194,23 +186,23 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
           </div>
 
           <div style={{ padding: "16px 22px 30px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {filtered.length === 0 && (
+            {visibleInvoices.length === 0 && (
               <div style={{ textAlign: "center", padding: 30, color: COLORS.mute, fontFamily: monoStack, fontSize: 12, letterSpacing: "0.1em" }}>
                 NO OVERDUE INVOICES
               </div>
             )}
-            {filtered.map((inv) => {
+            {visibleInvoices.map((inv) => {
               const name = invoiceContact(inv).name;
               const amount = inv.totalamount ?? 0;
               const dueDate = inv.duedate;
-              const daysOverdue = dueDate ? Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000) : null;
+              const daysOverdue = dueDate ? daysSince(dueDate) : null;
 
               return (
                 <div key={inv.invoiceid} style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderLeft: `3px solid ${COLORS.red}`, borderRadius: 16, padding: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                       <div style={{ width: 40, height: 40, borderRadius: 12, background: COLORS.cream, color: COLORS.navy, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: displayStack, fontWeight: 800, fontSize: 13 }}>
-                        {getInitials(name)}
+                        {initialsOf(name)}
                       </div>
                       <div>
                         <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 14 }}>{name}</div>
@@ -225,7 +217,7 @@ export const InvoicesScreen: React.FC<InvoicesScreenProps> = ({ go, goBack }) =>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{money(amount)}</div>
+                      <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{formatMkd(amount)}</div>
                       <div style={{ fontSize: 10, color: COLORS.mute, fontFamily: monoStack, letterSpacing: "0.1em" }}>
                         {inv.description || inv.invoicenumber || "INVOICE"}
                       </div>

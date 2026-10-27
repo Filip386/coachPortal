@@ -26,6 +26,8 @@ interface PerformanceEditorFieldsProps {
   disabled?: boolean;
 }
 
+const STAR_OPTIONS = [1, 2, 3, 4, 5];
+
 const sectionLabelStyle: React.CSSProperties = {
   fontFamily: monoStack,
   fontSize: 10,
@@ -36,11 +38,6 @@ const sectionLabelStyle: React.CSSProperties = {
   marginBottom: 10,
 };
 
-/**
- * Rating, the seven skill sliders, internal coach notes and the parent
- * feedback box — shared by the Performance and Attendance edit modals. The
- * overall rating is always derived from the sliders, never stored separately.
- */
 export const PerformanceEditorFields: React.FC<PerformanceEditorFieldsProps> = ({
   ratingLabel,
   playerName,
@@ -59,20 +56,20 @@ export const PerformanceEditorFields: React.FC<PerformanceEditorFieldsProps> = (
 
   return (
     <>
-      {/* Rating */}
       <div>
         <div style={sectionLabelStyle}>{ratingLabel}</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", ...lockedStyle }}>
-          {[1, 2, 3, 4, 5].map((n) => {
-            const full = rating >= n;
-            const half = !full && rating >= n - 0.5;
+          {STAR_OPTIONS.map((stars) => {
+            const isFull = rating >= stars;
+            const isHalf = !isFull && rating >= stars - 0.5;
+            const isLit = isFull || isHalf;
             return (
               <button
-                key={n}
-                onClick={() => onSkillsChange(skillsForStars(n))}
-                style={{ width: 42, height: 42, borderRadius: 12, border: 0, background: full ? COLORS.yellow : half ? `linear-gradient(90deg, ${COLORS.yellow} 50%, #F3F0E5 50%)` : "#F3F0E5", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+                key={stars}
+                onClick={() => onSkillsChange(skillsForStars(stars))}
+                style={{ width: 42, height: 42, borderRadius: 12, border: 0, background: isFull ? COLORS.yellow : isHalf ? `linear-gradient(90deg, ${COLORS.yellow} 50%, #F3F0E5 50%)` : "#F3F0E5", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
               >
-                <Star size={19} color={full || half ? COLORS.navy : COLORS.mute} fill={full || half ? COLORS.navy : "none"} strokeWidth={2} />
+                <Star size={19} color={isLit ? COLORS.navy : COLORS.mute} fill={isLit ? COLORS.navy : "none"} strokeWidth={2} />
               </button>
             );
           })}
@@ -83,7 +80,6 @@ export const PerformanceEditorFields: React.FC<PerformanceEditorFieldsProps> = (
         </div>
       </div>
 
-      {/* Skills */}
       <div>
         <div style={{ ...sectionLabelStyle, marginBottom: 12 }}>Attributes · {PERFORMANCE_SKILLS.length} Skills</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, ...lockedStyle }}>
@@ -99,7 +95,6 @@ export const PerformanceEditorFields: React.FC<PerformanceEditorFieldsProps> = (
         </div>
       </div>
 
-      {/* Internal coach notes — never shown to parents */}
       <div>
         <div style={sectionLabelStyle}>Coach Notes · Internal</div>
         <div style={{ background: COLORS.cream, border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: 12 }}>
@@ -113,7 +108,6 @@ export const PerformanceEditorFields: React.FC<PerformanceEditorFieldsProps> = (
         </div>
       </div>
 
-      {/* Parent feedback */}
       <div style={{ background: COLORS.yellowSoft, border: `1px solid ${COLORS.yellow}`, borderRadius: 16, padding: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
           <Eye size={13} color={COLORS.navy} strokeWidth={2} />

@@ -14,8 +14,9 @@ import {
   StaleDataNotice,
   StatusBar,
 } from "../components/shared";
-import { useData, type DataResourceStatus } from "../context/DataContext";
+import { useData, type DataResource } from "../context/DataContext";
 import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
+import { hasUsableData, isNotLoadedYet } from "../utils/resourceStatus";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 
 interface CoachAttendanceHistoryScreenProps {
@@ -23,8 +24,10 @@ interface CoachAttendanceHistoryScreenProps {
   goBack?: () => void;
 }
 
-const hasUsableData = (status: DataResourceStatus): boolean =>
-  status === "ready" || status === "refreshing" || status === "stale";
+const EVENT_TYPE_TOURNAMENT_MATCH = 216260001;
+const EVENT_TYPE_LEAGUE_MATCH = 216260002;
+const SCREEN_RESOURCES: DataResource[] = ["events", "coachAttendances"];
+
 
 interface EventVisual {
   symbol: string;
@@ -36,8 +39,6 @@ const getEventVisual = (event: Axm365_events): EventVisual => {
   const name = (event.axm365_name ?? "").toLowerCase();
   const typeName = (event.axm365_eventtypename ?? "").toLowerCase();
 
-  // Some existing records use Training as their broad Event Type but carry a
-  // more specific session in the name. Preserve those useful distinctions.
   if (name.includes("goalkeeper")) {
     return { symbol: "🧤", label: "Goalkeeper session", background: "#EAF1FF" };
   }
@@ -49,8 +50,8 @@ const getEventVisual = (event: Axm365_events): EventVisual => {
   }
 
   const isMatch =
-    event.axm365_eventtype === 216260001 ||
-    event.axm365_eventtype === 216260002 ||
+    event.axm365_eventtype === EVENT_TYPE_TOURNAMENT_MATCH ||
+    event.axm365_eventtype === EVENT_TYPE_LEAGUE_MATCH ||
     typeName.includes("tournament") ||
     typeName.includes("league") ||
     name.includes("match");
@@ -82,22 +83,18 @@ export const CoachAttendanceHistoryScreen: React.FC<
 
   const [refreshing, setRefreshing] = useState(false);
   const eventsAvailable = hasUsableData(resourceStatus.events);
-  const attendancesAvailable = hasUsableData(
-    resourceStatus.coachAttendances
-  );
+  const attendancesAvailable = hasUsableData(resourceStatus.coachAttendances);
   const resourcesAvailable = eventsAvailable && attendancesAvailable;
-  const screenError = getResourceError(["events", "coachAttendances"]);
-  const screenStale = hasStaleResources(["events", "coachAttendances"]);
+  const screenError = getResourceError(SCREEN_RESOURCES);
+  const screenStale = hasStaleResources(SCREEN_RESOURCES);
   const screenLoading =
     coachLookupLoading ||
     !coachId ||
-    resourceStatus.events === "idle" ||
-    resourceStatus.events === "loading" ||
-    resourceStatus.coachAttendances === "idle" ||
-    resourceStatus.coachAttendances === "loading";
+    isNotLoadedYet(resourceStatus.events) ||
+    isNotLoadedYet(resourceStatus.coachAttendances);
 
   useEffect(() => {
-    void ensureFresh(["events", "coachAttendances"]);
+    void ensureFresh(SCREEN_RESOURCES);
   }, [ensureFresh]);
 
   const history = useMemo(
@@ -105,28 +102,25 @@ export const CoachAttendanceHistoryScreen: React.FC<
       resourcesAvailable
         ? buildCoachAttendanceHistory(events, coachAttendances, coachId)
         : [],
-    [attendancesAvailable, coachAttendances, coachId, events, eventsAvailable]
+    [resourcesAvailable, coachAttendances, coachId, events]
   );
 
-  const presentCount = history.filter(
-    (entry) => entry.status === "present"
-  ).length;
+  const presentCount = history.filter((entry) => entry.status === "present").length;
   const absentCount = history.length - presentCount;
+
+  const reloadHistory = async () => {
+    if (!coachId) {
+      await refreshCoach();
+      return;
+    }
+    await refreshEvents();
+    await refreshCoachAttendances();
+  };
 
   const refreshData = async () => {
     setRefreshing(true);
-    try {
-      if (!coachId) {
-        await refreshCoach();
-      } else {
-        await refreshEvents();
-        await refreshCoachAttendances();
-      }
-    } catch {
-      // The resource-level banner supplies the actionable retry state.
-    } finally {
-      setRefreshing(false);
-    }
+    await reloadHistory().catch(() => {});
+    setRefreshing(false);
   };
 
   const dateLabel = (value?: string): string => {

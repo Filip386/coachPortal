@@ -10,19 +10,46 @@ export interface CoachEventAttendance {
   attendanceId: string | null;
 }
 
+interface CoachClockIn {
+  clockIn: string;
+  attendanceId: string;
+}
+
 const normalizeGuid = (value?: string | null): string =>
   (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
 
-/**
- * Builds coach attendance from the two authoritative Dataverse tables:
- * Events provide the last sessions, and Event Coach Attendances determine
- * whether the current coach has a matching clock-in. The Event.Coach lookup
- * is deliberately not consulted.
- *
- * Callers must wait until both resources are usable before displaying the
- * result. An empty attendance array is meaningful only after that load has
- * completed; before then it must not be interpreted as absences.
- */
+const timeOf = (date: string): number => new Date(date).getTime();
+
+const eventTime = (event: Axm365_events): number =>
+  event.axm365_eventdate ? timeOf(event.axm365_eventdate) : Number.NaN;
+
+function endOfDay(date: Date): number {
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+  return end.getTime();
+}
+
+function latestClockInByEvent(
+  coachAttendances: Axm365_eventcoachattendances[],
+  normalizedCoachId: string
+): Map<string, CoachClockIn> {
+  const clockInByEvent = new Map<string, CoachClockIn>();
+
+  for (const attendance of coachAttendances) {
+    const isThisCoach = normalizeGuid(attendance._axm365_coach_value) === normalizedCoachId;
+    const eventId = normalizeGuid(attendance._axm365_event_value);
+    const clockIn = attendance.axm365_clockin;
+    if (!isThisCoach || !eventId || !clockIn) continue;
+
+    const existing = clockInByEvent.get(eventId);
+    if (!existing || timeOf(clockIn) > timeOf(existing.clockIn)) {
+      clockInByEvent.set(eventId, { clockIn, attendanceId: attendance.axm365_eventcoachattendanceid });
+    }
+  }
+
+  return clockInByEvent;
+}
+
 export function buildCoachAttendanceHistory(
   events: Axm365_events[],
   coachAttendances: Axm365_eventcoachattendances[],
@@ -32,70 +59,23 @@ export function buildCoachAttendanceHistory(
   const normalizedCoachId = normalizeGuid(coachId);
   if (!normalizedCoachId) return [];
 
-  const clockInByEvent = new Map<
-    string,
-    { clockIn: string; attendanceId: string }
-  >();
-
-  coachAttendances.forEach((attendance) => {
-    const attendanceCoachId = normalizeGuid(attendance._axm365_coach_value);
-    const eventId = normalizeGuid(attendance._axm365_event_value);
-    const clockIn = attendance.axm365_clockin;
-
-    if (
-      attendanceCoachId !== normalizedCoachId ||
-      !eventId ||
-      !clockIn
-    ) {
-      return;
-    }
-
-    const existing = clockInByEvent.get(eventId);
-    if (
-      !existing ||
-      new Date(clockIn).getTime() > new Date(existing.clockIn).getTime()
-    ) {
-      clockInByEvent.set(eventId, {
-        clockIn,
-        attendanceId: attendance.axm365_eventcoachattendanceid,
-      });
-    }
-  });
-
-  // Include the complete present day, not only Events whose scheduled start
-  // time has already passed. This keeps today's Event visible in the latest
-  // 15 throughout the day.
-  const endOfToday = new Date(now);
-  endOfToday.setHours(23, 59, 59, 999);
-  const attendanceCutoffTime = endOfToday.getTime();
+  const clockInByEvent = latestClockInByEvent(coachAttendances, normalizedCoachId);
+  const cutoffTime = endOfDay(now);
 
   return events
     .filter((event) => {
-      const eventTime = event.axm365_eventdate
-        ? new Date(event.axm365_eventdate).getTime()
-        : Number.NaN;
-
-      return (
-        Number.isFinite(eventTime) &&
-        eventTime <= attendanceCutoffTime
-      );
+      const time = eventTime(event);
+      return Number.isFinite(time) && time <= cutoffTime;
     })
     .sort((left, right) => {
-      const dateDifference =
-        new Date(right.axm365_eventdate!).getTime() -
-        new Date(left.axm365_eventdate!).getTime();
-
-      return dateDifference !== 0
-        ? dateDifference
-        : right.axm365_eventid.localeCompare(left.axm365_eventid);
+      const newestFirst = eventTime(right) - eventTime(left);
+      return newestFirst !== 0 ? newestFirst : right.axm365_eventid.localeCompare(left.axm365_eventid);
     })
-    .map((event) => {
+    .map((event): CoachEventAttendance => {
       const clockIn = clockInByEvent.get(normalizeGuid(event.axm365_eventid));
-      const status: CoachAttendanceStatus = clockIn ? "present" : "absent";
-
       return {
         event,
-        status,
+        status: clockIn ? "present" : "absent",
         clockIn: clockIn?.clockIn ?? null,
         attendanceId: clockIn?.attendanceId ?? null,
       };

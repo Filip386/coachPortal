@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useState, useMemo, useEffect } from "react";
-import { MapPin, RefreshCw, Zap, Trophy, Activity, ChevronDown } from "lucide-react";
+import { MapPin, RefreshCw, Zap, Trophy, Activity, ChevronDown, type LucideIcon } from "lucide-react";
 import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
 import { Axm365_eventsaxm365_eventtype } from "../generated/models/Axm365_eventsModel";
 import { COLORS } from "../constants/design";
@@ -8,16 +8,19 @@ import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, ErrorBanner } from "../components/shared";
 import { Label, FakeInput, SuccessBanner } from "../components/ui";
 import { useData } from "../context/DataContext";
-import { lookupName } from "../utils/dataverse";
+import { lookupName, operationErrorMessage } from "../utils/dataverse";
 
 interface CreateEventScreenProps {
   go: (id: ScreenId) => void;
   goBack?: () => void;
 }
 
-// Event types come straight from the Dataverse option set (4 values).
+const TRAINING_EVENT_TYPE = 216260000;
+const DEFAULT_START_TIME = "17:30";
+const REDIRECT_AFTER_SUCCESS_MS = 1500;
+
 const prettyTypeName = (name: string) => name.replace(/([a-z])([A-Z])/g, "$1 $2");
-const TYPE_ICONS: Record<string, React.ComponentType<any>> = {
+const TYPE_ICONS: Record<string, LucideIcon> = {
   Training: Zap,
   TournamentMatch: Trophy,
   LeagueMatch: Trophy,
@@ -38,11 +41,11 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
     refreshFacilities,
     runDataverseWrite,
   } = useData();
-  const [typeCode, setTypeCode] = useState<number>(EVENT_TYPES[0]?.code ?? 216260000);
+  const [typeCode, setTypeCode] = useState<number>(EVENT_TYPES[0]?.code ?? TRAINING_EVENT_TYPE);
   const [title, setTitle] = useState("");
   const [titleEdited, setTitleEdited] = useState(false);
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
-  const [time, setTime] = useState("17:30");
+  const [time, setTime] = useState(DEFAULT_START_TIME);
   const [facilityId, setFacilityId] = useState<string>("");
   const [facilityName, setFacilityName] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -53,9 +56,10 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
   const [loadingFacilities, setLoadingFacilities] = useState(false);
 
   const selectedTypeLabel = EVENT_TYPES.find((t) => t.code === typeCode)?.label ?? "Event";
+  const defaultTitle = `${selectedTypeLabel} ${date}`;
   useEffect(() => {
-    if (!titleEdited) setTitle(`${selectedTypeLabel} ${date}`);
-  }, [selectedTypeLabel, date, titleEdited]);
+    if (!titleEdited) setTitle(defaultTitle);
+  }, [defaultTitle, titleEdited]);
 
   const facilities = useMemo(() => {
     if (allFacilities.length > 0) return allFacilities;
@@ -76,26 +80,20 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
     try {
       await refreshFacilities();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setFacilitiesError(msg);
-      console.error("[CoachPortal] Facilities retry failed:", msg);
+      const message = err instanceof Error ? err.message : String(err);
+      setFacilitiesError(message);
+      console.error("[CoachPortal] Facilities retry failed:", message);
     } finally {
       setLoadingFacilities(false);
     }
   };
 
   const handleCreate = async () => {
-    // Always send a non-empty name — fall back to "<Type> <date>" if the field
-    // is somehow blank, so the event is never created without a title.
-    const finalTitle = title.trim() || `${selectedTypeLabel} ${date}`;
+    const finalTitle = title.trim() || defaultTitle;
     setSuccess(false);
     try {
       setSaving(true);
       setError(null);
-      // Sent as an explicit UTC instant (not a bare "YYYY-MM-DDTHH:mm:ss"
-      // string) so Dataverse can't interpret the local date/time typed here
-      // as a different moment than intended — a mismatch that showed up as
-      // the created event landing on the wrong day/time.
       const localDateTime = new Date(`${date}T${time}:00`);
       const result = await runDataverseWrite(
         "Creating event",
@@ -106,16 +104,10 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
           ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
         } as any)
       );
-      if (!result.success) {
-        throw new Error(
-          (result.error as any)?.message ??
-            JSON.stringify(result.error) ??
-            "Failed to create event"
-        );
-      }
+      if (!result.success) throw new Error(operationErrorMessage(result.error, "Failed to create event"));
       await refreshEvents().catch(() => {});
       setSuccess(true);
-      setTimeout(() => { go("calendar"); }, 1500);
+      setTimeout(() => { go("calendar"); }, REDIRECT_AFTER_SUCCESS_MS);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create event");
     } finally {

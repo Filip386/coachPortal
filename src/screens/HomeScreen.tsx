@@ -1,20 +1,31 @@
-
 import React, { useEffect, useMemo } from "react";
 import { Clock, MapPin, Plus, TrendingUp, CircleDollarSign, Users, ArrowUpRight, ChevronRight, Check, X } from "lucide-react";
 import { COLORS, displayStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, SectionTitle, ActionTile, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { Stat, Divider } from "../components/ui";
-import { useData, type DataResourceStatus } from "../context/DataContext";
+import { useData, type DataResource } from "../context/DataContext";
 import { getInvoiceStatus } from "../utils/invoiceStatus";
 import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
+import { byEventDateAscending, isEventActive } from "../utils/eventStatus";
+import { hasUsableData, isNotLoadedYet } from "../utils/resourceStatus";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
 }
 
-const hasUsableData = (status: DataResourceStatus): boolean =>
-  status === "ready" || status === "refreshing" || status === "stale";
+const HOME_RESOURCES: DataResource[] = ["players", "events", "coachAttendances", "invoices"];
+const DEFERRED_RESOURCES: DataResource[] = [
+  "attendances",
+  "facilities",
+  "performances",
+  "generations",
+  "generationsToCoaches",
+  "tasks",
+];
+const DEFERRED_REFRESH_DELAY_MS = 2000;
+const RECENT_ATTENDANCE_COUNT = 15;
+const UPCOMING_EVENT_COUNT = 3;
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
   const { coachName, coachId, players, events, coachAttendances, invoices, tasks, refreshAll, ensureFresh, resourceStatus, hasStaleResources, getResourceError } = useData();
@@ -25,55 +36,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
   const playersAvailable = hasUsableData(resourceStatus.players);
   const eventsAvailable = hasUsableData(resourceStatus.events);
   const invoicesAvailable = hasUsableData(resourceStatus.invoices);
-  const coachAttendancesAvailable = hasUsableData(
-    resourceStatus.coachAttendances
-  );
+  const coachAttendancesAvailable = hasUsableData(resourceStatus.coachAttendances);
   const attendanceHistoryAvailable =
     Boolean(coachId) && eventsAvailable && coachAttendancesAvailable;
-  const eventsLoading =
-    resourceStatus.events === "idle" || resourceStatus.events === "loading";
+  const eventsLoading = isNotLoadedYet(resourceStatus.events);
 
-  // Stage 1: immediately load only the data Home needs. Stage 2: if Home
-  // remains mounted for two seconds, revalidate the remaining stale resources
-  // in the background. Navigating away cancels only the second stage.
   useEffect(() => {
-    void ensureFresh(["players", "events", "coachAttendances", "invoices"]);
+    void ensureFresh(HOME_RESOURCES);
 
     const timer = window.setTimeout(() => {
-      void ensureFresh([
-        "attendances",
-        "facilities",
-        "performances",
-        "generations",
-        "generationsToCoaches",
-        "tasks",
-      ]);
-    }, 2000);
+      void ensureFresh(DEFERRED_RESOURCES);
+    }, DEFERRED_REFRESH_DELAY_MS);
 
     return () => window.clearTimeout(timer);
   }, [ensureFresh]);
 
-  const todayEvents = events
-    .filter((e) => {
-      const d = e.axm365_eventdate;
-      if (!d) return false;
-      return new Date(d).toDateString() === new Date().toDateString();
-    })
-    .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime());
+  const todayEvents = events.filter(isEventActive).sort(byEventDateAscending);
 
   const squadCount = players.length;
   const overdueInvoices = invoices.filter((inv) => getInvoiceStatus(inv) === "Overdue");
   const now = new Date();
   const upcoming = events
     .filter((e) => e.axm365_eventdate && new Date(e.axm365_eventdate) >= now)
-    .sort((a, b) => new Date(a.axm365_eventdate!).getTime() - new Date(b.axm365_eventdate!).getTime())
-    .slice(0, 3);
+    .sort(byEventDateAscending)
+    .slice(0, UPCOMING_EVENT_COUNT);
 
   const recentCoachAttendance = useMemo(
     () =>
       attendanceHistoryAvailable
         ? buildCoachAttendanceHistory(events, coachAttendances, coachId)
-            .slice(0, 15)
+            .slice(0, RECENT_ATTENDANCE_COUNT)
             .reverse()
         : [],
     [attendanceHistoryAvailable, coachAttendances, coachId, events]

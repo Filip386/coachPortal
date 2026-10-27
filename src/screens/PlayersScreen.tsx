@@ -3,16 +3,20 @@ import { Search, RefreshCw, ChevronRight, ChevronDown, Star, X } from "lucide-re
 import { COLORS, fontStack, monoStack } from "../constants/design";
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice } from "../components/shared";
-import { useData } from "../context/DataContext";
+import { useData, type DataResource } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
+import { normalizeGuid, sameGuid } from "../utils/guid";
+import { buildCoachGenerationTabs, playersInGenerationTabs } from "../utils/generations";
+import { initialsOf } from "../utils/names";
 
-const normalizeGuid = (value?: string | null): string =>
-  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+const SCREEN_RESOURCES: DataResource[] = ["players", "performances", "generations", "generationsToCoaches"];
+const STAR_POSITIONS = [1, 2, 3, 4, 5];
+const ONE_STAR_RATING_CODE = 693080000;
+const TWO_STAR_RATING_CODE = 693080001;
+const DEFAULT_LIST_STARS = 2;
 
-const sameGuid = (left?: string | null, right?: string | null): boolean => {
-  const normalizedLeft = normalizeGuid(left);
-  return Boolean(normalizedLeft) && normalizedLeft === normalizeGuid(right);
-};
+const averageStars = (ratingCodes: number[]): number =>
+  Math.round(ratingCodes.reduce((sum, code) => sum + (code - ONE_STAR_RATING_CODE + 1), 0) / ratingCodes.length);
 
 interface PlayersScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
@@ -21,22 +25,10 @@ interface PlayersScreenProps {
 
 export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   const { players, performances, coachId, allGenerations, generationsToCoaches, ensureFresh, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
-  // Cached Players can render immediately. Performance and Generation tables
-  // refresh behind the list and must not blank the Squad screen.
   const screenLoading = isLoadingResources(["players"]);
   const screenLoadError = hasResourceErrors(["players"]);
-  const screenError = getResourceError([
-    "players",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenStale = hasStaleResources([
-    "players",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
+  const screenError = getResourceError(SCREEN_RESOURCES);
+  const screenStale = hasStaleResources(SCREEN_RESOURCES);
   const [pos, setPos] = useState("ALL");
   const [genId, setGenId] = useState("all");
   const autoSelectedCoachRef = React.useRef<string | null>(null);
@@ -46,121 +38,29 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    void ensureFresh([
-      "players",
-      "performances",
-      "generations",
-      "generationsToCoaches",
-    ]);
+    void ensureFresh(SCREEN_RESOURCES);
   }, [ensureFresh]);
 
   const refreshData = async () => {
     setRefreshing(true);
-    await ensureFresh(
-      ["players", "performances", "generations", "generationsToCoaches"],
-      { force: true }
-    ).catch(() => {});
+    await ensureFresh(SCREEN_RESOURCES, { force: true }).catch(() => {});
     setRefreshing(false);
   };
 
-  // Before Coach resolution, list every generation found on cached Players.
-  // Afterwards prefer Coach relationships, but never keep a relationship-only
-  // option that would produce an empty Player list.
-  const generationTabs = useMemo(() => {
-    const sortGenerations = (items: { id: string; name: string }[]) => {
-      const yearOf = (name: string) => {
-        const match = name.match(/\d{4}/) || name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : Number.POSITIVE_INFINITY;
-      };
-      return items.sort((left, right) => {
-        const leftYear = yearOf(left.name);
-        const rightYear = yearOf(right.name);
-        return leftYear !== rightYear
-          ? leftYear - rightYear
-          : left.name.localeCompare(right.name);
-      });
-    };
+  const generationTabs = useMemo(
+    () => buildCoachGenerationTabs(players, coachId, allGenerations, generationsToCoaches),
+    [coachId, players, allGenerations, generationsToCoaches]
+  );
 
-    const playerSeen = new Set<string>();
-    const playerGenerations: { id: string; name: string }[] = [];
-    players.forEach((player) => {
-      const id = (player as any)._cr9be_generation_value as string | undefined;
-      const name =
-        player.cr9be_generationname || lookupName(player, "cr9be_generation");
-      const normalizedId = normalizeGuid(id);
-      if (id && name && normalizedId && !playerSeen.has(normalizedId)) {
-        playerSeen.add(normalizedId);
-        playerGenerations.push({ id, name });
-      }
-    });
-
-    if (!coachId) return sortGenerations(playerGenerations);
-
-    const seen = new Set<string>();
-    const related: { id: string; name: string }[] = [];
-    const addRelatedGeneration = (id?: string, name?: string | null) => {
-      const normalizedId = normalizeGuid(id);
-      if (!id || !name || !normalizedId || seen.has(normalizedId)) return;
-      seen.add(normalizedId);
-      related.push({ id, name });
-    };
-
-    players
-      .filter((player) => sameGuid((player as any)._cr9be_coach_value, coachId))
-      .forEach((player) => {
-        addRelatedGeneration(
-          (player as any)._cr9be_generation_value as string | undefined,
-          player.cr9be_generationname || lookupName(player, "cr9be_generation")
-        );
-      });
-
-    allGenerations
-      .filter((generation) =>
-        sameGuid((generation as any)._cr9be_coach_value, coachId)
-      )
-      .forEach((generation) => {
-        addRelatedGeneration(
-          generation.axm365_generationid,
-          generation.axm365_name
-        );
-      });
-
-    generationsToCoaches
-      .filter((mapping) =>
-        sameGuid((mapping as any)._axm365_coach_value, coachId)
-      )
-      .forEach((mapping) => {
-        addRelatedGeneration(
-          (mapping as any)._axm365_generation_value as string | undefined,
-          mapping.axm365_generationname
-        );
-      });
-
-    const relatedWithPlayers = related.filter((generation) =>
-      players.some((player) =>
-        sameGuid((player as any)._cr9be_generation_value, generation.id)
-      )
-    );
-
-    return sortGenerations(
-      relatedWithPlayers.length > 0 ? relatedWithPlayers : playerGenerations
-    );
-  }, [coachId, players, allGenerations, generationsToCoaches]);
-
-  const visiblePlayers = useMemo(() => {
-    if (!coachId || generationTabs.length === 0) return players;
-    const relatedPlayers = players.filter((player) =>
-      generationTabs.some((generation) =>
-        sameGuid((player as any)._cr9be_generation_value, generation.id)
-      )
-    );
-    return relatedPlayers.length > 0 ? relatedPlayers : players;
-  }, [coachId, generationTabs, players]);
+  const visiblePlayers = useMemo(
+    () => playersInGenerationTabs(players, coachId, generationTabs),
+    [coachId, generationTabs, players]
+  );
 
   const primaryGenId = useMemo(() => {
     if (!coachId) return null;
     const primaryGeneration = allGenerations.find((generation) =>
-      sameGuid((generation as any)._cr9be_coach_value, coachId)
+      sameGuid(generation._cr9be_coach_value, coachId)
     );
     return generationTabs.find((generation) =>
       sameGuid(generation.id, primaryGeneration?.axm365_generationid)
@@ -184,14 +84,13 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
     }
   }, [coachId, primaryGenId]);
 
-  // Build filter tabs from real data — only positions that exist
   const positionTabs = Array.from(
     new Set(visiblePlayers.map((p) => lookupName(p, "cr9be_position")).filter(Boolean))
   ) as string[];
 
   const filtered = visiblePlayers.filter((p) => {
     const matchPos = pos === "ALL" || (lookupName(p, "cr9be_position") ?? "") === pos;
-    const matchGen = genId === "all" || sameGuid((p as any)._cr9be_generation_value, genId);
+    const matchGen = genId === "all" || sameGuid(p._cr9be_generation_value, genId);
     const matchSearch = search === "" || (p.cr9be_name || "").toLowerCase().includes(search.toLowerCase());
     return matchPos && matchGen && matchSearch;
   });
@@ -325,11 +224,10 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
             const name = p.cr9be_name || "Unknown";
             const num = p.cr9be_number ?? "?";
             const playerPos = lookupName(p, "cr9be_position");
-            const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
             const playerPerfs = performances.filter((perf) => perf._axm365_cr9be_player_value === playerId);
-            const perfRating: number = playerPerfs.length > 0
-              ? Math.round(playerPerfs.reduce((sum, perf) => sum + ((perf.axm365_raiting as number ?? 693080001) - 693080000 + 1), 0) / playerPerfs.length)
-              : 2;
+            const perfRating = playerPerfs.length > 0
+              ? averageStars(playerPerfs.map((perf) => perf.axm365_raiting as number ?? TWO_STAR_RATING_CODE))
+              : DEFAULT_LIST_STARS;
 
             return (
               <div
@@ -338,7 +236,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
                 style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 16, padding: 12, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
               >
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={initials} size={42} />
+                  <PlayerAvatar playerId={playerId} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={initialsOf(name)} size={42} />
                   <span style={{ position: "absolute", bottom: -3, right: -3, background: COLORS.yellow, color: COLORS.navy, fontSize: 9.5, fontWeight: 800, width: 18, height: 18, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid #fff` }}>
                     {num}
                   </span>
@@ -349,7 +247,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
                     {playerPos ? `${playerPos} · ` : ""}#{num}
                   </div>
                   <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
-                    {[1, 2, 3, 4, 5].map((n) => (
+                    {STAR_POSITIONS.map((n) => (
                       <Star key={n} size={11} color={n <= perfRating ? COLORS.yellow : COLORS.line} fill={n <= perfRating ? COLORS.yellow : "none"} strokeWidth={1.5} />
                     ))}
                   </div>

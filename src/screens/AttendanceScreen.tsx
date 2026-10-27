@@ -34,10 +34,14 @@ import {
   SuccessBanner,
   RatingStars,
 } from "../components/ui";
-import { useData, PLAYER_ATTENDANCE_FIELDS } from "../context/DataContext";
+import { useData, PLAYER_ATTENDANCE_FIELDS, type DataResource } from "../context/DataContext";
 import type { Axm365_eventattendances } from "../generated/models/Axm365_eventattendancesModel";
-import { lookupName, unwrap } from "../utils/dataverse";
-import { isEventActive } from "../utils/eventStatus";
+import { lookupName, operationErrorMessage, unwrap } from "../utils/dataverse";
+import { isEventActive, lastWeekEventsNewestFirst } from "../utils/eventStatus";
+import { normalizeGuid } from "../utils/guid";
+import { initialsOf } from "../utils/names";
+import { sortGenerationsByYear, type GenerationOption } from "../utils/generations";
+import { hasUsableData } from "../utils/resourceStatus";
 import {
   DEFAULT_STARS,
   PARENT_FEEDBACK_FIELD,
@@ -54,8 +58,35 @@ type AttendanceMark = "present" | "late" | "absent";
 
 const CLOCK_STORAGE_KEY = "coach_clock_session";
 
-const normalizeGuid = (value?: string | null): string =>
-  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
+const LOCKED_MESSAGE =
+  "Past sessions are locked. Only Back office can mark attendance or clock in for a past event.";
+
+const ROSTER_RESOURCES: DataResource[] = [
+  "players",
+  "events",
+  "performances",
+  "generations",
+  "generationsToCoaches",
+];
+const SCREEN_RESOURCES: DataResource[] = [
+  "players",
+  "events",
+  "attendances",
+  "performances",
+  "generations",
+  "generationsToCoaches",
+];
+const RESOURCES_TO_REFRESH_ON_OPEN: DataResource[] = [
+  "players",
+  "events",
+  "attendances",
+  "coachAttendances",
+  "performances",
+  "generations",
+  "generationsToCoaches",
+];
+const SAVED_BANNER_MS = 1500;
+const RETURN_HOME_AFTER_SAVE_MS = 1800;
 
 interface AttendanceScreenProps {
   go: (id: ScreenId) => void;
@@ -98,43 +129,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     recordPlayerAttendances,
   } = useData();
 
-  // Attendance is deliberately not part of the blocking loader: the roster
-  // stays visible while saved marks load, and only marking/saving waits.
-  const screenLoading = isLoadingResources([
-    "players",
-    "events",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const attendanceReady =
-    resourceStatus.attendances === "ready" ||
-    resourceStatus.attendances === "refreshing" ||
-    resourceStatus.attendances === "stale";
-  const screenLoadError = hasResourceErrors([
-    "players",
-    "events",
-    "attendances",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenError = getResourceError([
-    "players",
-    "events",
-    "attendances",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenStale = hasStaleResources([
-    "players",
-    "events",
-    "attendances",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
+  const screenLoading = isLoadingResources(ROSTER_RESOURCES);
+  const attendanceReady = hasUsableData(resourceStatus.attendances);
+  const screenLoadError = hasResourceErrors(SCREEN_RESOURCES);
+  const screenError = getResourceError(SCREEN_RESOURCES);
+  const screenStale = hasStaleResources(SCREEN_RESOURCES);
 
   const [saving, setSaving] = useState(false);
   const [saveProgress, setSaveProgress] = useState<{
@@ -159,10 +158,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [genSearch, setGenSearch] = useState("");
   const [showEventPicker, setShowEventPicker] = useState(false);
 
-  // ============================================================
-  // COACH CLOCK STATE
-  // ============================================================
-
   const [coachAttendanceId, setCoachAttendanceId] = useState<string | null>(
     null
   );
@@ -173,8 +168,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
   const [clockError, setClockError] = useState<string | null>(null);
 
-  // IMPORTANT:
-  // This tells us WHICH EVENT the current clock session belongs to.
   const [clockedInEventId, setClockedInEventId] = useState<string | null>(null);
 
   const persistedClockIn = useMemo(() => {
@@ -192,24 +185,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     );
   }, [coachAttendances, coachId, selectedEventId]);
 
-  const coachAttendanceResolved =
-    resourceStatus.coachAttendances === "ready" ||
-    resourceStatus.coachAttendances === "refreshing" ||
-    resourceStatus.coachAttendances === "stale";
+  const coachAttendanceResolved = hasUsableData(resourceStatus.coachAttendances);
   const coachAttendanceLoadError = getResourceError(["coachAttendances"]);
 
-  // IMPORTANT:
-  // This is calculated outside the useMemo because it is used
-  // throughout the JSX.
   const isCurrentEventClockedIn =
     Boolean(persistedClockIn) ||
     (clockedIn && !!clockedInEventId && clockedInEventId === selectedEventId);
-
-  // ============================================================
-  // ROLE-BASED EDIT LOCK
-  // Basic coaches can only mark attendance / clock in / rate players
-  // for today's event. Back office can edit any event, past or present.
-  // ============================================================
 
   const selectedEvent = useMemo(
     () => events.find((e) => e.axm365_eventid === selectedEventId) ?? null,
@@ -217,13 +198,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   );
 
   const locked = !!selectedEvent && !isBackOffice && !isEventActive(selectedEvent);
-
-  const LOCKED_MESSAGE =
-    "Past sessions are locked. Only Back office can mark attendance or clock in for a past event.";
-
-  // ============================================================
-  // PERFORMANCE EDIT MODAL STATE
-  // ============================================================
 
   const [perfEditPlayerId, setPerfEditPlayerId] = useState<string | null>(null);
 
@@ -237,130 +211,48 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
 
-  // ============================================================
-  // RECENT EVENTS / TODAY EVENT
-  // ============================================================
-
   const { recentEvents, todayEvent } = useMemo(() => {
-    const dated = events.filter((e) => e.axm365_eventdate);
-
     const now = new Date();
-
     const todayStr = now.toDateString();
-
-    // Event picker shows last week's events only:
-    // days -8 through -2.
-    const startLastWeek = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() - 8
-    ).getTime();
-
-    const endLastWeek =
-      new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime() -
-      1;
-
-    const byDateDesc = (a: any, b: any) =>
-      new Date(b.axm365_eventdate).getTime() -
-      new Date(a.axm365_eventdate).getTime();
-
-    const recent = dated
-      .filter((e) => {
-        const t = new Date(e.axm365_eventdate!).getTime();
-
-        return t >= startLastWeek && t <= endLastWeek;
-      })
-      .sort(byDateDesc);
-
     const today =
-      dated.find(
-        (e) => new Date(e.axm365_eventdate!).toDateString() === todayStr
+      events.find(
+        (e) => e.axm365_eventdate && new Date(e.axm365_eventdate).toDateString() === todayStr
       ) ?? null;
 
     return {
-      recentEvents: recent,
+      recentEvents: lastWeekEventsNewestFirst(events, now),
       todayEvent: today,
     };
   }, [events]);
 
-  // ============================================================
-  // GENERATIONS
-  // ============================================================
-
   const generations = useMemo(() => {
     const seen = new Set<string>();
-
-    const result: { id: string; name: string }[] = [];
-
-    // const coachPlayers = coachId
-    //   ? players.filter((p) => (p as any)._cr9be_coach_value === coachId)
-    //   : [];
-
-    //const sourcePlayers = coachPlayers.length > 0 ? coachPlayers : players;
-
-    players.forEach((p) => {
-      const id = (p as any)._cr9be_generation_value as string | undefined;
-
-      const name = p.cr9be_generationname || lookupName(p, "cr9be_generation");
-
+    const result: GenerationOption[] = [];
+    const addGeneration = (id?: string, name?: string | null) => {
       if (id && name && !seen.has(id)) {
         seen.add(id);
-
-        result.push({
-          id,
-          name,
-        });
+        result.push({ id, name });
       }
-    });
-
-    // Secondary generations from generationstocoaches
-    generationsToCoaches
-      .filter((gtc) => (gtc as any)._axm365_coach_value === coachId)
-      .forEach((gtc) => {
-        const genId = (gtc as any)._axm365_generation_value as
-          | string
-          | undefined;
-
-        const genName = gtc.axm365_generationname;
-
-        if (genId && genName && !seen.has(genId)) {
-          seen.add(genId);
-
-          result.push({
-            id: genId,
-            name: genName,
-          });
-        }
-      });
-
-    const yearOf = (s: string) => {
-      const m = s.match(/\d{4}/) || s.match(/\d+/);
-
-      return m ? parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
     };
 
-    return result.sort((a, b) => {
-      const ya = yearOf(a.name);
-      const yb = yearOf(b.name);
+    players.forEach((p) =>
+      addGeneration(p._cr9be_generation_value, p.cr9be_generationname || lookupName(p, "cr9be_generation"))
+    );
+    generationsToCoaches
+      .filter((mapping) => mapping._axm365_coach_value === coachId)
+      .forEach((mapping) => addGeneration(mapping._axm365_generation_value, mapping.axm365_generationname));
 
-      return ya !== yb ? ya - yb : a.name.localeCompare(b.name);
-    });
+    return sortGenerationsByYear(result);
   }, [coachId, players, generationsToCoaches]);
-
-  // ============================================================
-  // PRIMARY GENERATION
-  // ============================================================
 
   const primaryGenId = useMemo(() => {
     if (!coachId) {
       return generations[0]?.id ?? null;
     }
 
-    const fromTable = allGenerations.find(
-      (g) => (g as any)._cr9be_coach_value === coachId
-    );
+    const coachPrimaryGeneration = allGenerations.find((g) => g._cr9be_coach_value === coachId);
 
-    return fromTable?.axm365_generationid ?? generations[0]?.id ?? null;
+    return coachPrimaryGeneration?.axm365_generationid ?? generations[0]?.id ?? null;
   }, [coachId, allGenerations, generations]);
 
   useEffect(() => {
@@ -370,16 +262,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   }, [primaryGenId, genAutoSelected]);
 
-  // ============================================================
-  // SHOWN PLAYERS
-  // ============================================================
-
   const shownPlayers = useMemo(
     () =>
       selectedGenerationId === "all"
         ? players
         : players.filter(
-            (p) => (p as any)._cr9be_generation_value === selectedGenerationId
+            (p) => p._cr9be_generation_value === selectedGenerationId
           ),
     [players, selectedGenerationId]
   );
@@ -390,71 +278,41 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       : generations.find((g) => g.id === selectedGenerationId)?.name ??
         "All Generations";
 
-  // ============================================================
-  // DEFAULT EVENT
-  // ============================================================
-
   useEffect(() => {
     if (events.length > 0 && !selectedEventId && !initialEventId) {
       setSelectedEventId(todayEvent?.axm365_eventid ?? null);
     }
   }, [events, todayEvent]);
 
-  // ============================================================
-  // CLEAR CLOCK ERROR WHEN CHANGING EVENT
-  // ============================================================
-
   useEffect(() => {
     setClockError(null);
   }, [selectedEventId]);
 
-  // ============================================================
-  // TARGETED REVALIDATION ON TAB ENTRY
-  // ============================================================
-
   useEffect(() => {
-    void ensureFresh([
-      "players",
-      "events",
-      "attendances",
-      "coachAttendances",
-      "performances",
-      "generations",
-      "generationsToCoaches",
-    ]);
+    void ensureFresh(RESOURCES_TO_REFRESH_ON_OPEN);
   }, [ensureFresh]);
 
-  // ============================================================
-  // LOAD ATTENDANCE MARKS
-  // ============================================================
-
   useEffect(() => {
-    const base: Record<string, AttendanceMark> = {};
+    const marksForEvent: Record<string, AttendanceMark> = {};
 
     for (const p of players) {
-      base[p.cr9be_playerid] = "present";
+      marksForEvent[p.cr9be_playerid] = "present";
     }
 
     if (selectedEventId) {
-      const eventRecords = attendances.filter(
-        (a) => (a as any)._axm365_event_value === selectedEventId
-      );
+      const eventRecords = attendances.filter((a) => a._axm365_event_value === selectedEventId);
 
       for (const record of eventRecords) {
-        const playerId = (record as any)._axm365_player_value;
+        const playerId = record._axm365_player_value;
 
         if (playerId) {
-          base[playerId] = record.axm365_attended ? "present" : "absent";
+          marksForEvent[playerId] = record.axm365_attended ? "present" : "absent";
         }
       }
     }
 
-    setMarks(base);
+    setMarks(marksForEvent);
   }, [selectedEventId, attendances, players]);
-
-  // ============================================================
-  // LOAD PERFORMANCE DATA
-  // ============================================================
 
   useEffect(() => {
     if (!perfEditPlayerId || !selectedEventId) {
@@ -467,8 +325,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         p._axm365_event_value === selectedEventId
     );
 
-    // Saving here updates this event's record in place, so its parent
-    // feedback is loaded for editing too.
     setEditSkills(skillValuesFromPerformance(existing));
 
     setEditNotes(existing?.axm365_notes ?? "");
@@ -478,10 +334,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
   }, [perfEditPlayerId, selectedEventId, performances]);
-
-  // ============================================================
-  // RESTORE CLOCK SESSION
-  // ============================================================
 
   useEffect(() => {
     try {
@@ -495,9 +347,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       console.log("[Clock] Stored session:", session);
 
-      // Require eventId, and require the session's coachId to match the
-      // signed-in coach — otherwise one coach's active clock-in could leak
-      // into another coach's session on a shared/handed-off device.
       if (
         session?.clockedIn &&
         session?.coachAttendanceId &&
@@ -516,9 +365,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           coachAttendanceId: session.coachAttendanceId,
         });
       } else if (session?.coachId && session.coachId !== coachId) {
-        // coachId may just not have resolved yet — the effect re-runs once
-        // it does, so this isn't necessarily a real mismatch. Don't touch
-        // storage here; only an actual mismatch (checked above) matters.
         console.log(
           "[Clock] Stored session's coach doesn't match the current coach (yet)."
         );
@@ -533,10 +379,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       localStorage.removeItem(CLOCK_STORAGE_KEY);
     }
   }, [coachId]);
-
-  // ============================================================
-  // SAVE PERFORMANCE
-  // ============================================================
 
   const savePerfData = async () => {
     if (!perfEditPlayerId || !selectedEventId) {
@@ -589,13 +431,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           )
         );
 
-        if (!res.success) {
-          throw new Error(
-            (res.error as any)?.message ??
-              JSON.stringify(res.error) ??
-              "Update failed"
-          );
-        }
+        if (!res.success) throw new Error(operationErrorMessage(res.error, "Update failed"));
       } else {
         const res = await runDataverseWrite(
           "Creating player performance",
@@ -608,13 +444,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           } as any)
         );
 
-        if (!res.success) {
-          throw new Error(
-            (res.error as any)?.message ??
-              JSON.stringify(res.error) ??
-              "Create failed"
-          );
-        }
+        if (!res.success) throw new Error(operationErrorMessage(res.error, "Create failed"));
       }
 
       refreshPerformances().catch(() => {});
@@ -624,7 +454,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       setTimeout(() => {
         setPerfSaveSuccess(false);
         setPerfEditPlayerId(null);
-      }, 1500);
+      }, SAVED_BANNER_MS);
     } catch (err) {
       setPerfSaveError(
         err instanceof Error ? err.message : "Failed to save performance"
@@ -634,21 +464,12 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
-  // ============================================================
-  // ATTENDANCE HELPERS
-  // ============================================================
-
   const setMark = (id: string, v: AttendanceMark) =>
     setMarks((m) => ({
       ...m,
       [id]: v,
     }));
 
-  // Header totals represent attendance already saved for this Event, not the
-  // form's draft defaults. New Events intentionally begin at Players = roster
-  // size, Present = 0 and Absent = 0. Clicking Save writes every shown Player
-  // whose saved value differs (unmodified rows default to Present), and the
-  // confirmed writes are merged into attendances to update these totals.
   const savedAttendanceByPlayer = useMemo(() => {
     const result = new Map<string, boolean>();
     const normalizedEventId = normalizeGuid(selectedEventId);
@@ -659,32 +480,20 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     );
 
     attendances.forEach((attendance) => {
-      if (
-        normalizeGuid((attendance as any)._axm365_event_value) !==
-        normalizedEventId
-      ) {
-        return;
-      }
+      if (normalizeGuid(attendance._axm365_event_value) !== normalizedEventId) return;
 
-      const playerId = normalizeGuid(
-        (attendance as any)._axm365_player_value
-      );
+      const playerId = normalizeGuid(attendance._axm365_player_value);
       if (!playerId || !shownPlayerIds.has(playerId)) return;
 
-      // Count each Player once even if legacy duplicate rows exist.
       result.set(playerId, Boolean(attendance.axm365_attended));
     });
 
     return result;
   }, [attendances, selectedEventId, shownPlayers]);
 
-  const presentCount = Array.from(savedAttendanceByPlayer.values()).filter(
-    Boolean
-  ).length;
-
-  const absentCount = Array.from(savedAttendanceByPlayer.values()).filter(
-    (attended) => !attended
-  ).length;
+  const savedAttendanceValues = Array.from(savedAttendanceByPlayer.values());
+  const presentCount = savedAttendanceValues.filter(Boolean).length;
+  const absentCount = savedAttendanceValues.filter((attended) => !attended).length;
 
   const attendancePct =
     shownPlayers.length > 0
@@ -694,11 +503,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const throwIfError = (result: any, context: string) => {
     const err = result?.error ?? result?.Error ?? result?.errorCode;
 
-    // IMPORTANT: the Power Apps SDK signals failure through `success: false`.
-    // `error` is optional and is NOT always populated on a failed call, so
-    // testing it alone let genuine failures continue as if they had worked —
-    // which is how a rejected Clock In ended up reported as "succeeded, but
-    // the created attendance record ID was not returned".
     if (result?.success === false || err) {
       const raw = err?.message ?? err;
 
@@ -713,14 +517,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
-
-  // ============================================================
-  // CLOCK IN (no clock-out — a coach only ever clocks in)
-  // ============================================================
-
   const handleClockInOut = async () => {
-    console.log("[Clock] Selected event id:", selectedEventId);
-
     console.log("[Clock] handleClockInOut called:", {
       clockedIn,
       clockedInEventId,
@@ -742,11 +539,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
 
     if (!coachId) {
-      // Distinguish "still resolving" from "genuinely no linked Coach
-      // record" — surfacing the specific reason (from the email → Contact →
-      // Coach lookup in DataContext) instead of a generic message, so a
-      // real data-setup gap (e.g. no Contact for this email, or no Coach
-      // linked to it) is diagnosable from the error itself.
       setClockError(
         coachLookupLoading
           ? "Still loading your coach profile — please wait a moment and try again."
@@ -765,23 +557,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
-    // Already clocked in for this event — there is no clock-out action,
-    // so this is a no-op (the button is also disabled in this state).
     if (isCurrentEventClockedIn) {
       return;
     }
-
-    // ==========================================================
-    // IMPORTANT:
-    // There is no clock-out action, so a stored session from Event A is
-    // never explicitly cleared before the coach clocks into Event B — it
-    // would otherwise block clocking in for every future event forever.
-    // Switching the selected event to something other than the active
-    // session's event means the coach has moved on, so just clear the old
-    // session here and fall through to clock in for the newly selected
-    // event (each event's date already comes from Dataverse, so this
-    // naturally covers both a same-day switch and a different day).
-    // ==========================================================
 
     if (clockedIn && clockedInEventId && clockedInEventId !== selectedEventId) {
       setClockedIn(false);
@@ -793,20 +571,33 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     setClockSaving(true);
     setClockError(null);
 
-    try {
-      // ========================================================
-      // CHECK FOR AN EXISTING CLOCK IN
-      //
-      // Local storage is only a convenience and may have been cleared. A
-      // final table lookup prevents a second row when this coach already
-      // clocked in to the selected Event on another device/session.
-      // ========================================================
+    const activeClockInFilter = `statecode eq 0 and _axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`;
 
+    const markClockedIn = (attendanceId: string) => {
+      setCoachAttendanceId(attendanceId);
+      setClockedInEventId(selectedEventId);
+      setClockedIn(true);
+    };
+
+    const rememberClockSession = (attendanceId: string, clockStartTime: number) => {
+      localStorage.setItem(
+        CLOCK_STORAGE_KEY,
+        JSON.stringify({
+          clockedIn: true,
+          coachAttendanceId: attendanceId,
+          clockStartTime,
+          eventId: selectedEventId,
+          coachId,
+        })
+      );
+    };
+
+    try {
       const existingLookup = await runDataverseRead(
         "Checking existing clock in",
         () =>
           Axm365_eventcoachattendancesService.getAll({
-            filter: `statecode eq 0 and _axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+            filter: activeClockInFilter,
             orderBy: ["createdon desc"],
           })
       );
@@ -821,26 +612,11 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         const existingId = existingClockIn.axm365_eventcoachattendanceid as string;
         const existingTime = String(existingClockIn.axm365_clockin);
 
-        setCoachAttendanceId(existingId);
-        setClockedInEventId(selectedEventId);
-        setClockedIn(true);
+        markClockedIn(existingId);
         recordCoachClockIn(selectedEventId, existingId, existingTime);
-        localStorage.setItem(
-          CLOCK_STORAGE_KEY,
-          JSON.stringify({
-            clockedIn: true,
-            coachAttendanceId: existingId,
-            clockStartTime: new Date(existingTime).getTime(),
-            eventId: selectedEventId,
-            coachId,
-          })
-        );
+        rememberClockSession(existingId, new Date(existingTime).getTime());
         return;
       }
-
-      // ========================================================
-      // CLOCK IN
-      // ========================================================
 
       console.log("[Clock] Clocking IN:", {
         coachId,
@@ -858,24 +634,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
           axm365_clockin: clockInAt,
 
-          // USE coachId
           "axm365_Coach@odata.bind": `/cr9be_coachs(${coachId})`,
 
-          // CURRENT EVENT
           "axm365_Event@odata.bind": `/axm365_events(${selectedEventId})`,
         } as any)
       );
 
       throwIfError(res, "Clock In");
 
-      // Logged raw so a failure that only reproduces on the mobile player
-      // can be diagnosed from the device console — the response shape is
-      // what differs between hosts, and it is otherwise invisible.
       console.log("[Clock] Raw create response:", res);
-
-      // ========================================================
-      // GET CREATED RECORD ID
-      // ========================================================
 
       let createdId: string | null =
         (res as any)?.data?.axm365_eventcoachattendanceid ??
@@ -883,21 +650,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         (res as any)?.data?.id ??
         (res as any)?.id ??
         null;
-
-      // ========================================================
-      // IMPORTANT:
-      // Reaching here means Dataverse ACCEPTED the create — the attendance
-      // row exists. Whether the created record is echoed back in the
-      // response body is a host decision (it depends on the platform
-      // sending `Prefer: return=representation`), and the mobile player
-      // does not always do so. Treating a missing id as a failure was
-      // therefore wrong twice over: it reported a successful clock-in as an
-      // error, and it left `clockedIn` false, so tapping the button again
-      // wrote a SECOND row for the same coach and event.
-      //
-      // So when the id is absent, read it back instead of failing: the row
-      // is uniquely identified by coach + event.
-      // ========================================================
 
       if (!createdId) {
         console.warn(
@@ -907,7 +659,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         const lookup = await runDataverseRead(
           "Confirming clock in",
           () => Axm365_eventcoachattendancesService.getAll({
-            filter: `statecode eq 0 and _axm365_coach_value eq ${coachId} and _axm365_event_value eq ${selectedEventId}`,
+            filter: activeClockInFilter,
           })
         );
 
@@ -928,40 +680,10 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         );
       }
 
-      const startTime = Date.now();
+      const clockStartTime = Date.now();
+      markClockedIn(createdId);
+      rememberClockSession(createdId, clockStartTime);
 
-      // ========================================================
-      // SAVE ACTIVE SESSION
-      // ========================================================
-
-      setCoachAttendanceId(createdId);
-
-      setClockedInEventId(selectedEventId);
-
-      setClockedIn(true);
-
-      // IMPORTANT:
-      // Save eventId and coachId so we know which event/coach this active
-      // session belongs to, even after switching events, refreshing the
-      // page, or reopening the app.
-      localStorage.setItem(
-        CLOCK_STORAGE_KEY,
-        JSON.stringify({
-          clockedIn: true,
-
-          coachAttendanceId: createdId,
-
-          clockStartTime: startTime,
-
-          eventId: selectedEventId,
-
-          coachId: coachId,
-        })
-      );
-
-      // The create is confirmed at this point. Update the Coach-scoped cache
-      // immediately so Home/history cannot briefly mark this Event Absent,
-      // then reconcile with Dataverse through the shared mobile-safe queue.
       recordCoachClockIn(
         selectedEventId,
         createdId,
@@ -985,10 +707,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     }
   };
 
-  // ============================================================
-  // SAVE PLAYER ATTENDANCE
-  // ============================================================
-
   const saveAttendance = async () => {
     if (!selectedEventId) {
       return;
@@ -1008,8 +726,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
-    // Without the saved rows, every Player would look new and Save would
-    // create duplicates instead of updating.
     if (!attendanceReady) {
       setWriteError(
         "Saved attendance is still loading. Please wait a moment and try again."
@@ -1017,16 +733,14 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       return;
     }
 
-    // Each write is a separate queued round trip on mobile, so skip Players
-    // whose saved value already matches their mark.
     const writes = shownPlayers.flatMap((p) => {
       const playerId = p.cr9be_playerid;
       const attended = (marks[playerId] ?? "present") !== "absent";
 
       const existing = attendances.find(
         (a) =>
-          (a as any)._axm365_player_value === playerId &&
-          (a as any)._axm365_event_value === selectedEventId
+          a._axm365_player_value === playerId &&
+          a._axm365_event_value === selectedEventId
       );
 
       if (existing && Boolean(existing.axm365_attended) === attended) {
@@ -1083,7 +797,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
           throwIfError(res, `Create ${p.cr9be_name}`);
 
-          // The mobile host does not always echo the created record back.
           const createdId: string | null =
             (res as any)?.data?.axm365_eventattendanceid ??
             (res as any)?.axm365_eventattendanceid ??
@@ -1111,14 +824,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       );
     }
 
-    // Reflect confirmed writes immediately — including those that succeeded
-    // before a failure — so Present/Absent update and a retry updates these
-    // rows instead of creating duplicates.
     recordPlayerAttendances(confirmed);
 
     if (createdWithoutId) {
-      // New ids are needed before the next save. Read back only this Event's
-      // rows rather than the whole attendance table.
       try {
         const eventRows = await runDataverseRead(
           "Confirming saved attendance",
@@ -1133,7 +841,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           unwrap<Axm365_eventattendances>(eventRows) ?? []
         );
       } catch {
-        // The list stays visible: attendance is only "refreshing" here.
         await refreshAttendances().catch(() => {});
       }
     }
@@ -1146,27 +853,15 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
       setTimeout(() => {
         go("home");
-      }, 1800);
+      }, RETURN_HOME_AFTER_SAVE_MS);
     }
   };
 
-  // ============================================================
-  // SELECTED EVENT
-  // ============================================================
-
   const eventName = selectedEvent ? selectedEvent.axm365_name : "Select Event";
-
-  // ============================================================
-  // PERFORMANCE PLAYER
-  // ============================================================
 
   const perfEditPlayer = players.find(
     (p) => p.cr9be_playerid === perfEditPlayerId
   );
-
-  // ============================================================
-  // RENDER
-  // ============================================================
 
   return (
     <>
@@ -1303,10 +998,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               Mark Attendance
             </h1>
 
-            {/* =================================================
-                CLOCK IN
-            ================================================= */}
-
             <div
               style={{
                 marginTop: 14,
@@ -1317,9 +1008,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
               }}
             >
               {isCurrentEventClockedIn ? (
-                // No time shown here — the clock-in moment is only ever
-                // recorded in the background (axm365_clockin), never
-                // surfaced as a running clock in the UI.
                 <div
                   style={{
                     flex: 1,
@@ -1659,12 +1347,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
                   const pos = lookupName(p, "cr9be_position");
 
-                  const initials = name
-                    .split(" ")
-                    .map((n: string) => n[0])
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase();
+                  const initials = initialsOf(name);
 
                   const existingPerf = performances.find(
                     (perf) =>
@@ -1966,10 +1649,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           </div>
         )}
 
-      {/* ========================================================
-          GENERATION PICKER
-      ======================================================== */}
-
       {showGenerationPicker &&
         (() => {
           const filteredGens = generations.filter((g) =>
@@ -2183,10 +1862,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
 
           return portalTarget ? createPortal(modal, portalTarget) : modal;
         })()}
-
-      {/* ========================================================
-          EVENT PICKER
-      ======================================================== */}
 
       {showEventPicker &&
         (() => {
@@ -2456,10 +2131,6 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
           return portalTarget ? createPortal(modal, portalTarget) : modal;
         })()}
 
-      {/* ========================================================
-          PERFORMANCE EDIT MODAL
-      ======================================================== */}
-
       {perfEditPlayerId &&
         (() => {
           const modal = (
@@ -2523,12 +2194,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                         playerId={perfEditPlayer.cr9be_playerid}
                         hasPicture={!!perfEditPlayer.cr9be_pictureid}
                         pictureVersion={perfEditPlayer.cr9be_picture_timestamp}
-                        initials={(perfEditPlayer.cr9be_name || "P")
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")
-                          .slice(0, 2)
-                          .toUpperCase()}
+                        initials={initialsOf(perfEditPlayer.cr9be_name || "P")}
                         size={44}
                       />
                     )}

@@ -2,6 +2,8 @@ import React from "react";
 import { Star, StarHalf } from "lucide-react";
 import { COLORS, displayStack, fontStack, monoStack } from "../../constants/design";
 
+const STAR_POSITIONS = [1, 2, 3, 4, 5];
+
 export const Stat: React.FC<{ label: string; value: string; warn?: boolean }> = ({ label, value, warn }) => (
   <div>
     <div style={{ fontFamily: displayStack, fontSize: 22, fontWeight: 800, color: warn ? COLORS.yellow : "#fff", letterSpacing: "-0.02em", lineHeight: 1 }}>
@@ -83,26 +85,6 @@ export const PillStat: React.FC<{ color: string; label: string; value: string | 
   </div>
 );
 
-export const Chip: React.FC<{ children: React.ReactNode; yellow?: boolean }> = ({ children, yellow }) => (
-  <span
-    style={{
-      padding: "4px 9px",
-      borderRadius: 99,
-      background: yellow ? COLORS.yellowSoft : COLORS.cream,
-      border: `1px solid ${yellow ? COLORS.yellow : COLORS.line}`,
-      fontSize: 11,
-      fontWeight: 600,
-      color: COLORS.navy,
-      fontFamily: monoStack,
-      letterSpacing: "0.04em",
-    }}
-  >
-    {children}
-  </span>
-);
-
-// A null value means the skill was never scored (e.g. a record saved before
-// that skill existed) — shown as a dash rather than a made-up number.
 export const AttributeBar: React.FC<{ label: string; value: number | null }> = ({ label, value }) => (
   <div>
     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
@@ -117,13 +99,13 @@ export const AttributeBar: React.FC<{ label: string; value: number | null }> = (
 
 export const RatingStars: React.FC<{ rating: number; size?: number; gap?: number; strokeWidth?: number }> = ({ rating, size = 18, gap = 5, strokeWidth = 2 }) => (
   <div style={{ display: "flex", gap }}>
-    {[1, 2, 3, 4, 5].map((n) => {
-      const full = rating >= n;
-      const half = !full && rating >= n - 0.5;
+    {STAR_POSITIONS.map((stars) => {
+      const isFull = rating >= stars;
+      const isHalf = !isFull && rating >= stars - 0.5;
       return (
-        <span key={n} style={{ position: "relative", display: "inline-flex", width: size, height: size }}>
-          <Star size={size} color={full ? COLORS.yellow : COLORS.line} fill={full ? COLORS.yellow : "none"} strokeWidth={strokeWidth} />
-          {half && <StarHalf size={size} color={COLORS.yellow} fill={COLORS.yellow} strokeWidth={strokeWidth} style={{ position: "absolute", inset: 0 }} />}
+        <span key={stars} style={{ position: "relative", display: "inline-flex", width: size, height: size }}>
+          <Star size={size} color={isFull ? COLORS.yellow : COLORS.line} fill={isFull ? COLORS.yellow : "none"} strokeWidth={strokeWidth} />
+          {isHalf && <StarHalf size={size} color={COLORS.yellow} fill={COLORS.yellow} strokeWidth={strokeWidth} style={{ position: "absolute", inset: 0 }} />}
         </span>
       );
     })}

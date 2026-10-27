@@ -6,6 +6,9 @@ import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, SectionTitle, LoadingSpinner, ErrorBanner, StaleDataNotice } from "../components/shared";
 import { useData } from "../context/DataContext";
 import { lookupName } from "../utils/dataverse";
+import { byEventDateAscending } from "../utils/eventStatus";
+
+const WEEKDAY_LABELS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
 interface CalendarScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
@@ -33,38 +36,35 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
     setRefreshing(false);
   };
 
-  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+  const showPreviousMonth = () => {
+    if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear((y) => y - 1); }
+    else setCurrentMonth((m) => m - 1);
+  };
+
+  const showNextMonth = () => {
+    if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear((y) => y + 1); }
+    else setCurrentMonth((m) => m + 1);
+  };
+
+  const firstWeekday = new Date(currentYear, currentMonth, 1).getDay();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const startOffset = (firstDay + 6) % 7;
+  const blankCellsBeforeFirstDay = (firstWeekday + 6) % 7;
 
   const eventsByDay: Record<number, Axm365_events[]> = {};
-  events.forEach((e) => {
-    const d = e.axm365_eventdate;
-    if (!d) return;
-    const evDate = new Date(d);
-    if (evDate.getMonth() === currentMonth && evDate.getFullYear() === currentYear) {
-      const day = evDate.getDate();
+  events.forEach((event) => {
+    if (!event.axm365_eventdate) return;
+    const eventDate = new Date(event.axm365_eventdate);
+    if (eventDate.getMonth() === currentMonth && eventDate.getFullYear() === currentYear) {
+      const day = eventDate.getDate();
       if (!eventsByDay[day]) eventsByDay[day] = [];
-      eventsByDay[day].push(e);
+      eventsByDay[day].push(event);
     }
   });
 
-  // Events arrive in whatever order Dataverse returned them, which is not
-  // chronological, so a day holding 17:00 and 17:30 could list them either
-  // way round. Sort each day by start time so the list reads down the day.
-  // Every event in a bucket passed the `if (!d) return` guard above, so the
-  // date is always present here.
-  Object.values(eventsByDay).forEach((dayEvents) => {
-    dayEvents.sort(
-      (a, b) =>
-        new Date(a.axm365_eventdate!).getTime() -
-        new Date(b.axm365_eventdate!).getTime()
-    );
-  });
+  Object.values(eventsByDay).forEach((dayEvents) => dayEvents.sort(byEventDateAscending));
 
-  const days = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
-  const cells = Array.from({ length: startOffset + daysInMonth }, (_, i) =>
-    i < startOffset ? null : i - startOffset + 1
+  const dayCells = Array.from({ length: blankCellsBeforeFirstDay + daysInMonth }, (_, i) =>
+    i < blankCellsBeforeFirstDay ? null : i - blankCellsBeforeFirstDay + 1
   );
 
   const selectedEvents = eventsByDay[selectedDay] ?? [];
@@ -106,20 +106,14 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
             <div style={{ background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 22, padding: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <button
-                  onClick={() => {
-                    if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear((y) => y - 1); }
-                    else setCurrentMonth((m) => m - 1);
-                  }}
+                  onClick={showPreviousMonth}
                   style={{ background: "transparent", border: 0, cursor: "pointer" }}
                 >
                   <ChevronLeft size={18} color={COLORS.navy} strokeWidth={2} />
                 </button>
                 <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 16, color: COLORS.navy }}>{monthName}</div>
                 <button
-                  onClick={() => {
-                    if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear((y) => y + 1); }
-                    else setCurrentMonth((m) => m + 1);
-                  }}
+                  onClick={showNextMonth}
                   style={{ background: "transparent", border: 0, cursor: "pointer" }}
                 >
                   <ChevronRight size={18} color={COLORS.navy} strokeWidth={2} />
@@ -127,33 +121,33 @@ export const CalendarScreen: React.FC<CalendarScreenProps> = ({ go, goBack }) =>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 8 }}>
-                {days.map((d) => (
-                  <div key={d} style={{ textAlign: "center", fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.14em", color: COLORS.mute, fontWeight: 600 }}>
-                    {d}
+                {WEEKDAY_LABELS.map((label) => (
+                  <div key={label} style={{ textAlign: "center", fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.14em", color: COLORS.mute, fontWeight: 600 }}>
+                    {label}
                   </div>
                 ))}
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-                {cells.map((n, i) => {
-                  const isMonth = n !== null;
-                  const isSelected = isMonth && n === selectedDay;
-                  const evs = isMonth ? (eventsByDay[n!] ?? []) : [];
+                {dayCells.map((day, i) => {
+                  const isDayOfMonth = day !== null;
+                  const isSelected = isDayOfMonth && day === selectedDay;
+                  const dayEvents = isDayOfMonth ? (eventsByDay[day!] ?? []) : [];
                   return (
                     <button
                       key={i}
-                      onClick={() => isMonth && setSelectedDay(n!)}
-                      style={{ aspectRatio: "1", border: 0, background: isSelected ? COLORS.navy : "transparent", color: !isMonth ? "transparent" : isSelected ? "#fff" : COLORS.navy, borderRadius: 10, cursor: isMonth ? "pointer" : "default", fontFamily: displayStack, fontWeight: 700, fontSize: 13, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
+                      onClick={() => isDayOfMonth && setSelectedDay(day!)}
+                      style={{ aspectRatio: "1", border: 0, background: isSelected ? COLORS.navy : "transparent", color: !isDayOfMonth ? "transparent" : isSelected ? "#fff" : COLORS.navy, borderRadius: 10, cursor: isDayOfMonth ? "pointer" : "default", fontFamily: displayStack, fontWeight: 700, fontSize: 13, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}
                     >
-                      {isMonth ? n : ""}
-                      {evs.length > 0 && !isSelected && (
+                      {isDayOfMonth ? day : ""}
+                      {dayEvents.length > 0 && !isSelected && (
                         <span style={{ position: "absolute", bottom: 4, display: "flex", gap: 2 }}>
-                          {evs.slice(0, 2).map((_, k) => (
+                          {dayEvents.slice(0, 2).map((_, k) => (
                             <span key={k} style={{ width: 4, height: 4, borderRadius: 99, background: k === 0 ? COLORS.yellow : COLORS.red }} />
                           ))}
                         </span>
                       )}
-                      {evs.length > 0 && isSelected && (
+                      {dayEvents.length > 0 && isSelected && (
                         <span style={{ position: "absolute", bottom: 4, width: 4, height: 4, borderRadius: 99, background: COLORS.yellow }} />
                       )}
                     </button>

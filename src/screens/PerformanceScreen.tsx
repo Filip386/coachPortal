@@ -7,13 +7,17 @@ import { COLORS, fontStack, displayStack, monoStack } from "../constants/design"
 import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, LoadingSpinner, ErrorBanner, PlayerAvatar, StaleDataNotice, PerformanceEditorFields } from "../components/shared";
 import { AttributeBar, RatingStars } from "../components/ui";
-import { useData, type GuardianContactDetails } from "../context/DataContext";
+import { useData, type DataResource, type GuardianContactDetails } from "../context/DataContext";
 import { usePortalTarget } from "../context/PhoneFrameContext";
 import { Axm365_playereventperformancesService } from "../generated/services/Axm365_playereventperformancesService";
 import { Cr9be_playersService } from "../generated/services/Cr9be_playersService";
 import type { Axm365_events } from "../generated/models/Axm365_eventsModel";
 import type { Axm365_playereventperformances } from "../generated/models/Axm365_playereventperformancesModel";
-import { lookupName } from "../utils/dataverse";
+import { lookupName, operationErrorMessage } from "../utils/dataverse";
+import { lastWeekEventsNewestFirst } from "../utils/eventStatus";
+import { normalizeGuid, sameGuid } from "../utils/guid";
+import { initialsOf } from "../utils/names";
+import { buildCoachGenerationTabs, playerGenerationName as generationNameOf, playersInGenerationTabs } from "../utils/generations";
 import {
   PERFORMANCE_SKILLS,
   PARENT_FEEDBACK_FIELD,
@@ -31,8 +35,10 @@ import {
 } from "../utils/performanceSkills";
 
 const EVENT_TYPE_TRAINING = 216260000;
+const GUARDIAN_RETRY_DELAYS_MS = [5_000, 15_000, 45_000] as const;
+const BACKGROUND_REFRESH_DELAY_MS = 250;
+const SCREEN_RESOURCES: DataResource[] = ["players", "events", "performances", "generations", "generationsToCoaches"];
 
-// "Training" or "Match" — every non-training event type is a kind of match.
 const eventKindLabel = (event: Axm365_events): string =>
   event.axm365_eventtype === undefined || event.axm365_eventtype === null
     ? event.axm365_eventtypename || "Event"
@@ -48,14 +54,6 @@ const lineClamp = (lines: number): React.CSSProperties => ({
   overflow: "hidden",
 });
 
-const normalizeGuid = (value?: string | null): string =>
-  (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
-
-const sameGuid = (left?: string | null, right?: string | null): boolean => {
-  const normalizedLeft = normalizeGuid(left);
-  return Boolean(normalizedLeft) && normalizedLeft === normalizeGuid(right);
-};
-
 interface PerformanceScreenProps {
   go: (id: ScreenId, playerId?: string) => void;
   goBack?: () => void;
@@ -65,25 +63,10 @@ interface PerformanceScreenProps {
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack, selectedPlayerId, initialEventId }) => {
   const { players, performances, events, refreshPlayers, refreshPerformances, coachId, allGenerations, generationsToCoaches, ensureFresh, getCachedGuardianContact, getGuardianContact, runDataverseWrite, isLoadingResources, hasResourceErrors, hasStaleResources, getResourceError } = useData();
-  // Only the Player table blocks the visible screen. The other resources keep
-  // loading in the background, so cached Players and their guardian details
-  // remain visible while Coach/Generation mapping is still resolving.
   const screenLoading = isLoadingResources(["players"]);
   const screenLoadError = hasResourceErrors(["players"]);
-  const screenError = getResourceError([
-    "players",
-    "events",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
-  const screenStale = hasStaleResources([
-    "players",
-    "events",
-    "performances",
-    "generations",
-    "generationsToCoaches",
-  ]);
+  const screenError = getResourceError(SCREEN_RESOURCES);
+  const screenStale = hasStaleResources(SCREEN_RESOURCES);
   const portalTarget = usePortalTarget();
   const [selectedId, setSelectedId] = useState<string | null>(selectedPlayerId ?? null);
   const [selectedGenId, setSelectedGenId] = useState("all");
@@ -93,7 +76,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [perfTab, setPerfTab] = useState<"attributes" | "feedback">("attributes");
   const [expandedFeedbackId, setExpandedFeedbackId] = useState<string | null>(null);
 
-  // Performance edit modal state — event selection is optional
   const [showEditModal, setShowEditModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
   const [eventPickerOpen, setEventPickerOpen] = useState(false);
@@ -105,8 +87,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [perfSaveSuccess, setPerfSaveSuccess] = useState(false);
   const [perfSaveError, setPerfSaveError] = useState<string | null>(null);
 
-  // Player details edit modal (jersey number + position) — separate from the
-  // performance modal above since it edits the player record, not a performance entry.
   const [showEditPlayerModal, setShowEditPlayerModal] = useState(false);
   const [editPlayerNumber, setEditPlayerNumber] = useState("");
   const [editPlayerPositionId, setEditPlayerPositionId] = useState<string | null>(null);
@@ -116,104 +96,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const [playerSaveError, setPlayerSaveError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Players are the critical first stage: they identify the selected
-    // guardian. Starting every Performance read here used to put the Contact
-    // lookup at the back of the mobile-safe Dataverse queue.
     if (players.length === 0) void ensureFresh(["players"]);
   }, [ensureFresh, players.length]);
 
-  const generationTabs = useMemo(() => {
-    const sortGenerations = (items: { id: string; name: string }[]) => {
-      const yearOf = (name: string) => {
-        const match = name.match(/\d{4}/) || name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : Infinity;
-      };
-      return items.sort((left, right) => {
-        const leftYear = yearOf(left.name);
-        const rightYear = yearOf(right.name);
-        return leftYear !== rightYear
-          ? leftYear - rightYear
-          : left.name.localeCompare(right.name);
-      });
-    };
+  const generationTabs = useMemo(
+    () => buildCoachGenerationTabs(players, coachId, allGenerations, generationsToCoaches),
+    [coachId, players, allGenerations, generationsToCoaches]
+  );
 
-    const collectPlayerGenerations = () => {
-      const seen = new Set<string>();
-      const result: { id: string; name: string }[] = [];
-      players.forEach((player) => {
-        const id = (player as any)._cr9be_generation_value as string | undefined;
-        const name =
-          player.cr9be_generationname || lookupName(player, "cr9be_generation");
-        const normalizedId = normalizeGuid(id);
-        if (id && name && normalizedId && !seen.has(normalizedId)) {
-          seen.add(normalizedId);
-          result.push({ id, name });
-        }
-      });
-      return result;
-    };
-
-    const playerGenerations = collectPlayerGenerations();
-    if (!coachId) return sortGenerations(playerGenerations);
-
-    const seen = new Set<string>();
-    const related: { id: string; name: string }[] = [];
-    const addRelatedGeneration = (id?: string, name?: string | null) => {
-      const normalizedId = normalizeGuid(id);
-      if (!id || !name || !normalizedId || seen.has(normalizedId)) return;
-      seen.add(normalizedId);
-      related.push({ id, name });
-    };
-
-    players
-      .filter((player) => sameGuid((player as any)._cr9be_coach_value, coachId))
-      .forEach((player) => {
-        addRelatedGeneration(
-          (player as any)._cr9be_generation_value as string | undefined,
-          player.cr9be_generationname || lookupName(player, "cr9be_generation")
-        );
-      });
-
-    allGenerations
-      .filter((generation) =>
-        sameGuid((generation as any)._cr9be_coach_value, coachId)
-      )
-      .forEach((generation) => {
-        addRelatedGeneration(
-          generation.axm365_generationid,
-          generation.axm365_name
-        );
-      });
-
-    generationsToCoaches
-      .filter((mapping) =>
-        sameGuid((mapping as any)._axm365_coach_value, coachId)
-      )
-      .forEach((mapping) => {
-        addRelatedGeneration(
-          (mapping as any)._axm365_generation_value as string | undefined,
-          mapping.axm365_generationname
-        );
-      });
-
-    // Never expose a generation filter that produces an empty Player list.
-    // If cached relationship tables disagree with cached Players, fall back to
-    // the generations actually present on those Players until refresh repairs it.
-    const relatedWithPlayers = related.filter((generation) =>
-      players.some((player) =>
-        sameGuid((player as any)._cr9be_generation_value, generation.id)
-      )
-    );
-
-    return sortGenerations(
-      relatedWithPlayers.length > 0 ? relatedWithPlayers : playerGenerations
-    );
-  }, [coachId, players, allGenerations, generationsToCoaches]);
-
-  // Centre the active generation chip when the selection (or the strip itself)
-  // changes. Only the strip scrolls: scrollIntoView also scrolls the page, and
-  // running it from an inline ref fired it on every render, so each keystroke
-  // in the edit modal jumped the screen away from the field being typed in.
   const generationStripRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
     const strip = generationStripRef.current;
@@ -223,24 +113,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     strip.scrollBy({ left: chipLeft - (strip.clientWidth - chip.offsetWidth) / 2, behavior: "smooth" });
   }, [selectedGenId, generationTabs, screenLoading, screenLoadError]);
 
-  const coachPlayers = useMemo(() => {
-    if (!coachId || generationTabs.length === 0) return players;
-    const filtered = players.filter((player) =>
-      generationTabs.some((generation) =>
-        sameGuid(
-          (player as any)._cr9be_generation_value,
-          generation.id
-        )
-      )
-    );
-    return filtered.length > 0 ? filtered : players;
-  }, [coachId, generationTabs, players]);
+  const coachPlayers = useMemo(
+    () => playersInGenerationTabs(players, coachId, generationTabs),
+    [coachId, generationTabs, players]
+  );
 
   const primaryGenId = useMemo(() => {
     if (!coachId) return null;
 
     const primaryGeneration = allGenerations.find((generation) =>
-      sameGuid((generation as any)._cr9be_coach_value, coachId)
+      sameGuid(generation._cr9be_coach_value, coachId)
     );
     const primaryTab = generationTabs.find((generation) =>
       sameGuid(generation.id, primaryGeneration?.axm365_generationid)
@@ -253,9 +135,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     return candidates.find(
       (candidate): candidate is string =>
         Boolean(candidate) &&
-        players.some((player) =>
-          sameGuid((player as any)._cr9be_generation_value, candidate)
-        )
+        players.some((player) => sameGuid(player._cr9be_generation_value, candidate))
     ) ?? null;
   }, [coachId, allGenerations, generationTabs, players]);
 
@@ -276,13 +156,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       return;
     }
 
-    const first = players.find((p) =>
-      sameGuid((p as any)._cr9be_generation_value, primaryGenId)
+    const firstPlayerInPrimaryGeneration = players.find((p) =>
+      sameGuid(p._cr9be_generation_value, primaryGenId)
     );
 
-    if (first) {
+    if (firstPlayerInPrimaryGeneration) {
       setSelectedGenId(primaryGenId);
-      setSelectedId(first.cr9be_playerid);
+      setSelectedId(firstPlayerInPrimaryGeneration.cr9be_playerid);
       autoSelectedCoachRef.current = normalizedCoachId;
     }
   }, [coachId, primaryGenId, players, selectedPlayerId]);
@@ -290,17 +170,15 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   useEffect(() => {
     if (!selectedPlayerId) return;
     setSelectedId(selectedPlayerId);
-    const p = players.find((pl) => pl.cr9be_playerid === selectedPlayerId);
-    const genId = (p as any)?._cr9be_generation_value as string | undefined;
-    if (genId) setSelectedGenId(genId);
+    const requestedPlayer = players.find((p) => p.cr9be_playerid === selectedPlayerId);
+    const generationId = requestedPlayer?._cr9be_generation_value;
+    if (generationId) setSelectedGenId(generationId);
   }, [selectedPlayerId, players]);
 
   const playersInGen = useMemo(
     () => selectedGenId === "all"
       ? coachPlayers
-      : coachPlayers.filter((p) =>
-          sameGuid((p as any)._cr9be_generation_value, selectedGenId)
-        ),
+      : coachPlayers.filter((p) => sameGuid(p._cr9be_generation_value, selectedGenId)),
     [coachPlayers, selectedGenId]
   );
 
@@ -326,11 +204,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const playerName = player ? (player.cr9be_name || "Player") : "Player";
   const playerPos = lookupName(player, "cr9be_position");
   const playerNum = player ? (player.cr9be_number ?? "?") : "?";
-  const initials = playerName.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
+  const initials = initialsOf(playerName);
 
-  // Guardian details come from the related Contact so they reflect current
-  // Contact values rather than a potentially stale lookup-name annotation.
-  const guardianId = (player as any)?._cr9be_member_value as string | undefined;
+  const guardianId = player?._cr9be_member_value;
   const guardianLookupName = lookupName(player, "cr9be_member") || null;
   const [guardianContact, setGuardianContact] = useState<GuardianContactDetails | null>(null);
   const [guardianLoading, setGuardianLoading] = useState(false);
@@ -351,8 +227,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const scheduleGuardianRetry = useCallback(() => {
     if (guardianRetryTimerRef.current !== null) return;
 
-    const delays = [5_000, 15_000, 45_000] as const;
-    const delay = delays[guardianRetryAttemptRef.current];
+    const delay = GUARDIAN_RETRY_DELAYS_MS[guardianRetryAttemptRef.current];
     if (delay === undefined) return;
 
     guardianRetryAttemptRef.current += 1;
@@ -372,20 +247,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       const cached = getCachedGuardianContact(id);
 
       if (cached) {
-        // Stale-while-revalidate: never replace usable guardian details with
-        // a loading state. A stale value stays visible while Dataverse refreshes.
         setGuardianContact(cached.details);
         setGuardianError(null);
         setGuardianLoading(false);
-        // A cache hit is immediately usable, including a confirmed null phone.
-        // Stale values stay visible while they are refreshed in background.
         setGuardianPhoneLoading(false);
 
         if (cached.isFresh && !force) return;
       } else if (fallbackName) {
-        // On the first-ever load there is no Contact cache yet, but the Player
-        // row normally carries the lookup's formatted name. Show that at once
-        // and fill in the phone number when the Contact request succeeds.
         setGuardianContact({ name: fallbackName, phone: null });
         setGuardianError(null);
         setGuardianLoading(false);
@@ -398,9 +266,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       }
 
       try {
-        const details = await getGuardianContact(id, {
-          force,
-        });
+        const details = await getGuardianContact(id, { force });
         if (guardianRequestVersionRef.current !== requestVersion) return;
         setGuardianContact(details);
         setGuardianError(null);
@@ -409,17 +275,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         clearGuardianRetry();
       } catch (err) {
         if (guardianRequestVersionRef.current !== requestVersion) return;
-        // A background refresh failure must not hide saved guardian details.
-        // Only a first load with no cache needs an actionable error.
         if (!cached && !fallbackName) {
           setGuardianContact(null);
           setGuardianError(
             err instanceof Error ? err.message : "Failed to load guardian details"
           );
         } else {
-          // Keep the usable name/card on screen. The shared read already did
-          // its short mobile retries; schedule slower follow-up attempts
-          // without turning this into a blocking screen error.
           scheduleGuardianRetry();
         }
         setGuardianPhoneLoading(false);
@@ -449,17 +310,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       return;
     }
 
-    // Contact retrieval is independent of Coach/account-cache readiness.
-    // DataContext uses a scoped cache when available and otherwise performs
-    // the same live Contact read without blocking this card.
     void loadGuardian(
       guardianId,
       guardianRetryAttemptRef.current > 0,
       guardianLookupName
     );
 
-    // The Dataverse call cannot be cancelled, but invalidating this request
-    // prevents an older player's response from updating the current player.
     return () => {
       guardianRequestVersionRef.current += 1;
     };
@@ -467,38 +323,19 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
 
   useEffect(() => {
     if (players.length === 0) return;
-    // Give the selected guardian effect above one render turn to enter the
-    // serialized queue first. It no longer waits for account/cache scope.
-    // The remaining screen data then follows without creating concurrent
-    // Dataverse bridge calls.
     const timer = window.setTimeout(() => {
-      // These reads remain non-blocking for the visible cached Player card,
-      // but Performance now refreshes its own Generation mappings again.
-      void ensureFresh([
-        "players",
-        "events",
-        "performances",
-        "generations",
-        "generationsToCoaches",
-      ]);
-    }, 250);
+      void ensureFresh(SCREEN_RESOURCES);
+    }, BACKGROUND_REFRESH_DELAY_MS);
 
     return () => window.clearTimeout(timer);
   }, [ensureFresh, players.length]);
 
-  // Memoized on [performances, selectedId] so the array reference is stable across
-  // re-renders — otherwise the Edit Mode prefill effect below (which depends on
-  // playerPerfsSorted) would re-fire on every keystroke/slider drag and reset the
-  // sliders back to the loaded values before the user's change could register.
   const playerPerfs = useMemo(
     () => performances.filter((p) => p._axm365_cr9be_player_value === selectedId),
     [performances, selectedId]
   );
   const hasData = playerPerfs.length > 0;
 
-  // Most recent performance first — every save creates a new record, so createdon
-  // (the Dataverse-assigned creation timestamp) reflects the true chronological
-  // history instead of an overwritten single row or API return order.
   const playerPerfsSorted = useMemo(
     () => [...playerPerfs].sort((a, b) => new Date(b.createdon ?? 0).getTime() - new Date(a.createdon ?? 0).getTime()),
     [playerPerfs]
@@ -506,17 +343,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const latestPerf = playerPerfsSorted[0];
   const previousPerf = playerPerfsSorted[1];
 
-  // Ratings are the half-star average of the recorded skills, so the number
-  // on the card always agrees with the attribute bars below it.
   const latestRating = latestPerf ? performanceRating(latestPerf) : DEFAULT_STARS;
   const previousRating = previousPerf ? performanceRating(previousPerf) : null;
   const ratingChange = previousRating !== null ? latestRating - previousRating : null;
 
-  // Latest coach's note — trimmed so a whitespace-only note doesn't render an empty card.
   const latestNotes = latestPerf?.axm365_notes?.trim();
 
-  // Every record that carries parent feedback, newest first. The first one is
-  // the featured card; the rest are listed as earlier feedback.
   const feedbackEntries = useMemo(
     () => playerPerfsSorted.filter((p) => parentFeedbackOf(p)),
     [playerPerfsSorted]
@@ -531,42 +363,21 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     const dateLabel = date
       ? new Date(date).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }).toUpperCase()
       : null;
-    // An event that isn't in the loaded list still gets its date, just no kind.
     const kindLabel = event ? eventKindLabel(event) : perf._axm365_event_value ? null : "General";
     return [dateLabel, kindLabel?.toUpperCase()].filter(Boolean).join(" · ");
   };
 
-  const playerGenerationName = player
-    ? player.cr9be_generationname || lookupName(player, "cr9be_generation")
-    : null;
-  // The author is whoever saved the record; the player's assigned coach is
-  // the fallback when Dataverse didn't return the creator's name.
+  const playerGenerationName = player ? generationNameOf(player) : null;
   const feedbackAuthor = (perf: Axm365_playereventperformances): string =>
     lookupName(perf, "createdby") || lookupName(player, "cr9be_coach") || "Coach";
 
-  const sortedEvents = useMemo(() => {
-    const now = new Date();
-    // Event picker shows last week's events only — days -8 through -2, excluding
-    // today and yesterday. Mirrors the same window used in Mark Attendance.
-    const startLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 8).getTime();
-    const endLastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime() - 1;
-    return events
-      .filter((e) => {
-        if (!e.axm365_eventdate) return false;
-        const t = new Date(e.axm365_eventdate).getTime();
-        return t >= startLastWeek && t <= endLastWeek;
-      })
-      .sort((a, b) => new Date(b.axm365_eventdate ?? 0).getTime() - new Date(a.axm365_eventdate ?? 0).getTime());
-  }, [events]);
+  const sortedEvents = useMemo(() => lastWeekEventsNewestFirst(events), [events]);
 
   const filteredEvents = eventSearch
     ? sortedEvents.filter((e) => (e.axm365_name || "").toLowerCase().includes(eventSearch.toLowerCase()))
     : sortedEvents;
 
   const openEditModal = () => {
-    // Edit Mode preselects the event the coach arrived with (e.g. tapping
-    // "Performance" from an event on the Home screen). Otherwise it starts
-    // without an event, and the coach can always change or clear it manually.
     setEditEventId(initialEventId ?? null);
     setPerfSaveSuccess(false);
     setPerfSaveError(null);
@@ -575,9 +386,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     setShowEditModal(true);
   };
 
-  // Prefill Edit Mode with the player's last saved performance so the coach only has
-  // to adjust what changed. If the chosen event already has its own record, that
-  // takes precedence over the player's overall most-recent record.
   useEffect(() => {
     if (!showEditModal || !selectedId) return;
     const eventMatch = editEventId
@@ -588,8 +396,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     const source = eventMatch ?? playerPerfsSorted[0];
     setEditSkills(skillValuesFromPerformance(source));
     setEditNotes(source?.axm365_notes ?? "");
-    // Parent feedback always starts empty: every save here creates a new
-    // record, so carrying the previous text over would post it twice.
     setEditParentFeedback("");
   }, [editEventId, selectedId, showEditModal, performances, playerPerfsSorted]);
 
@@ -599,8 +405,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     setPerfSaveError(null);
     try {
       const selectedEvent = editEventId ? events.find((e) => e.axm365_eventid === editEventId) : undefined;
-      // Always creates a new record — never overwrites a prior one — so the full
-      // performance history is preserved for the "most recent" display.
       const res = await runDataverseWrite(
         "Creating player performance",
         () => Axm365_playereventperformancesService.create({
@@ -613,7 +417,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
           ...(editEventId && { "axm365_Event@odata.bind": `/axm365_events(${editEventId})` }),
         } as any)
       );
-      if (!res.success) throw new Error((res.error as any)?.message ?? JSON.stringify(res.error) ?? "Create failed");
+      if (!res.success) throw new Error(operationErrorMessage(res.error, "Create failed"));
       await refreshPerformances().catch(() => {});
       setPerfSaveSuccess(true);
       setTimeout(() => {
@@ -627,13 +431,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
     }
   };
 
-  // Position choices derived from whatever positions already exist across the squad —
-  // there's no dedicated Position lookup wired into this app, same approach PlayersScreen uses.
   const positionOptions = useMemo(() => {
     const seen = new Set<string>();
     const result: { id: string; name: string }[] = [];
     players.forEach((p) => {
-      const id = (p as any)._cr9be_position_value as string | undefined;
+      const id = p._cr9be_position_value;
       const name = lookupName(p, "cr9be_position");
       if (id && name && !seen.has(id)) {
         seen.add(id);
@@ -646,7 +448,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
   const openEditPlayerModal = () => {
     if (!player) return;
     setEditPlayerNumber(player.cr9be_number != null ? String(player.cr9be_number) : "");
-    setEditPlayerPositionId((player as any)._cr9be_position_value ?? null);
+    setEditPlayerPositionId(player._cr9be_position_value ?? null);
     setPositionPickerOpen(false);
     setPlayerSaveSuccess(false);
     setPlayerSaveError(null);
@@ -661,7 +463,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       const trimmed = editPlayerNumber.trim();
       const changes: Record<string, unknown> = {};
       if (trimmed === "") {
-        // Explicit null clears the field — omitting it entirely would just leave the old value in place.
         changes.cr9be_number = null;
       } else {
         const numValue = Number(trimmed);
@@ -698,19 +499,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
       {screenError && (
         <ErrorBanner
           message={screenError}
-          onRetry={() =>
-            void ensureFresh(
-              ["players", "events", "performances", "generations", "generationsToCoaches"],
-              { force: true }
-            )
-          }
+          onRetry={() => void ensureFresh(SCREEN_RESOURCES, { force: true })}
         />
       )}
       {screenStale && <StaleDataNotice />}
 
       {!screenLoading && !screenLoadError && players.length > 0 && (
         <>
-          {/* Generation filter */}
           {generationTabs.length > 0 && (
             <div ref={generationStripRef} style={{ padding: "0 22px 10px", display: "flex", gap: 6, overflowX: "auto" }}>
               {[{ id: "all", name: "ALL" }, ...generationTabs].map((tab) => {
@@ -723,12 +518,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                     data-active={active || undefined}
                     onClick={() => {
                       setSelectedGenId(tab.id);
-                      const first = (tab.id === "all"
+                      const firstPlayerInTab = (tab.id === "all"
                         ? coachPlayers
-                        : coachPlayers.filter((p) =>
-                            sameGuid((p as any)._cr9be_generation_value, tab.id)
-                          ))[0];
-                      setSelectedId(first?.cr9be_playerid ?? null);
+                        : coachPlayers.filter((p) => sameGuid(p._cr9be_generation_value, tab.id)))[0];
+                      setSelectedId(firstPlayerInTab?.cr9be_playerid ?? null);
                     }}
                     style={{ flex: "0 0 auto", padding: "7px 14px", background: active ? COLORS.navy : "#fff", color: active ? "#fff" : COLORS.navy, border: `1px solid ${active ? COLORS.navy : COLORS.line}`, borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: monoStack, letterSpacing: "0.08em" }}
                   >
@@ -739,14 +532,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
             </div>
           )}
 
-          {/* Player dropdown with search */}
           <div style={{ padding: "0 22px 12px", position: "relative" }}>
             <button
               onClick={() => { setDropdownOpen(!dropdownOpen); setSearch(""); }}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", background: "#fff", border: `1px solid ${COLORS.line}`, borderRadius: 14, cursor: "pointer", textAlign: "left" }}
             >
               {player && (
-                <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} pictureVersion={(player as any).cr9be_picture_timestamp} initials={initials} size={28} />
+                <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!player.cr9be_pictureid} pictureVersion={player.cr9be_picture_timestamp} initials={initials} size={28} />
               )}
               <span style={{ flex: 1, fontFamily: fontStack, fontSize: 13.5, fontWeight: 700, color: COLORS.navy }}>
                 {player ? playerName : "Select player…"}
@@ -775,7 +567,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   {filteredPlayers.map((p) => {
                     const pid = p.cr9be_playerid;
                     const name = p.cr9be_name || "Player";
-                    const ini = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
                     const active = selectedId === pid;
                     return (
                       <button
@@ -783,7 +574,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                         onClick={() => { setSelectedId(pid); setDropdownOpen(false); setSearch(""); }}
                         style={{ width: "100%", padding: "10px 14px", background: active ? COLORS.yellowSoft : "transparent", border: "none", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: `1px solid ${COLORS.line}` }}
                       >
-                        <PlayerAvatar playerId={pid} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={ini} size={28} />
+                        <PlayerAvatar playerId={pid} hasPicture={!!p.cr9be_pictureid} pictureVersion={p.cr9be_picture_timestamp} initials={initialsOf(name)} size={28} />
                         <span style={{ fontFamily: fontStack, fontSize: 13.5, fontWeight: active ? 700 : 500, color: COLORS.navy, textAlign: "left" }}>{name}</span>
                       </button>
                     );
@@ -800,8 +591,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                 <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative" }}>
                   <PlayerAvatar
                     playerId={player.cr9be_playerid}
-                    hasPicture={!!(player as any).cr9be_pictureid}
-                    pictureVersion={(player as any).cr9be_picture_timestamp}
+                    hasPicture={!!player.cr9be_pictureid}
+                    pictureVersion={player.cr9be_picture_timestamp}
                     initials={initials}
                     size={56}
                     editable
@@ -964,7 +755,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               Latest Performance
             </div>
 
-            {/* Attributes / Parent feedback switch */}
             <div style={{ marginTop: 10, display: "flex", gap: 4, padding: 4, background: COLORS.line, borderRadius: 14 }}>
               {([
                 { id: "attributes", label: "Attributes" },
@@ -1001,8 +791,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   ))}
                 </div>
 
-                {/* Latest coach's note — only the single most recent one, matching the
-                    "Latest" scope used by the rating and attribute bars above. */}
                 {latestNotes && (
                   <div style={{ marginTop: 18 }}>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, letterSpacing: "0.22em", textTransform: "uppercase", color: COLORS.mute, fontWeight: 600 }}>
@@ -1115,7 +903,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         </div>
       )}
 
-      {/* Overall performance edit modal — saved without an event link */}
       {showEditModal && player && (() => {
         const modal = (
           <div
@@ -1126,15 +913,13 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
               onClick={(e) => e.stopPropagation()}
               style={{ background: "#fff", borderRadius: "24px 24px 0 0", width: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
             >
-              {/* Handle */}
               <div style={{ padding: "12px 0 4px", display: "flex", justifyContent: "center", flexShrink: 0 }}>
                 <div style={{ width: 40, height: 4, borderRadius: 99, background: COLORS.line }} />
               </div>
 
-              {/* Header */}
               <div style={{ padding: "0 22px 14px", borderBottom: `1px solid ${COLORS.line}`, flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!(player as any).cr9be_pictureid} pictureVersion={(player as any).cr9be_picture_timestamp} initials={initials} size={44} />
+                  <PlayerAvatar playerId={player.cr9be_playerid} hasPicture={!!player.cr9be_pictureid} pictureVersion={player.cr9be_picture_timestamp} initials={initials} size={44} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontFamily: displayStack, fontWeight: 800, fontSize: 17, color: COLORS.navy }}>{playerName}</div>
                     <div style={{ fontFamily: monoStack, fontSize: 9.5, color: COLORS.mute, letterSpacing: "0.12em", marginTop: 1 }}>
@@ -1150,7 +935,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                 </div>
               </div>
 
-              {/* Scrollable body */}
               <div style={{ overflowY: "auto", padding: "16px 22px 30px", display: "flex", flexDirection: "column", gap: 20 }}>
                 {perfSaveSuccess && (
                   <div style={{ background: COLORS.green, color: "#fff", borderRadius: 12, padding: "10px 14px", textAlign: "center", fontWeight: 600, fontSize: 13 }}>
@@ -1163,7 +947,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   </div>
                 )}
 
-                {/* Event — optional */}
                 <div>
                   <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
                     Event <span style={{ color: COLORS.mute, textTransform: "none", letterSpacing: 0, fontWeight: 500 }}></span>
@@ -1249,7 +1032,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   onParentFeedbackChange={setEditParentFeedback}
                 />
 
-                {/* Save button */}
                 <button
                   disabled={perfSaving}
                   onClick={savePlayerPerformance}
@@ -1265,7 +1047,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
         return portalTarget ? createPortal(modal, portalTarget) : modal;
       })()}
 
-      {/* Player details edit modal — jersey number + position */}
       {showEditPlayerModal && player && (() => {
         const modal = (
           <div
@@ -1284,8 +1065,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <PlayerAvatar
                     playerId={player.cr9be_playerid}
-                    hasPicture={!!(player as any).cr9be_pictureid}
-                    pictureVersion={(player as any).cr9be_picture_timestamp}
+                    hasPicture={!!player.cr9be_pictureid}
+                    pictureVersion={player.cr9be_picture_timestamp}
                     initials={initials}
                     size={44}
                   />
@@ -1314,15 +1095,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   </div>
                 )}
 
-                {/* Photo */}
                 <div>
                   <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
                     Photo
                   </div>
                   <PlayerAvatar
                     playerId={player.cr9be_playerid}
-                    hasPicture={!!(player as any).cr9be_pictureid}
-                    pictureVersion={(player as any).cr9be_picture_timestamp}
+                    hasPicture={!!player.cr9be_pictureid}
+                    pictureVersion={player.cr9be_picture_timestamp}
                     initials={initials}
                     size={72}
                     editable
@@ -1331,7 +1111,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   />
                 </div>
 
-                {/* Jersey number */}
                 <div>
                   <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
                     Jersey Number
@@ -1358,7 +1137,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   </div>
                 </div>
 
-                {/* Position */}
                 <div>
                   <div style={{ fontFamily: monoStack, fontSize: 10, letterSpacing: "0.18em", color: COLORS.mute, fontWeight: 600, textTransform: "uppercase", marginBottom: 10 }}>
                     Position
@@ -1394,7 +1172,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({ go, goBack
                   )}
                 </div>
 
-                {/* Save button */}
                 <button
                   disabled={playerSaving}
                   onClick={savePlayerDetails}

@@ -1,6 +1,5 @@
 export { LoadingSpinner } from "./LoadingSpinner";
 export { ErrorBanner } from "./ErrorBanner";
-export { PhoneFrame } from "./PhoneFrame";
 export { StatusBar } from "./StatusBar";
 export { ScreenHeader } from "./ScreenHeader";
 export { BottomNav } from "./BottomNav";
@@ -8,4 +7,4 @@ export { SectionTitle } from "./SectionTitle";
 export { ActionTile } from "./ActionTile";
 export { PlayerAvatar } from "./PlayerAvatar";
 export { PerformanceEditorFields } from "./PerformanceEditorFields";
-export { StaleDataNotice } from "./StaleDataNotice.tsx";
+export { StaleDataNotice } from "./StaleDataNotice";

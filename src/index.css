@@ -31,7 +31,6 @@ body {
   min-height: 100dvh;
 }
 
-/* Clean button reset — all styling is done via inline styles */
 button {
   border: none;
   padding: 0;
@@ -63,7 +62,6 @@ select {
   font-size: inherit;
 }
 
-/* Prevent iOS Safari auto-zoom on focus (triggers when font-size < 16px) */
 @media (max-width: 767px) {
   input,
   select,
@@ -72,7 +70,6 @@ select {
   }
 }
 
-/* Hide scrollbars — this is an app, not a document */
 * {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -82,7 +79,6 @@ select {
   display: none;
 }
 
-/* Animations */
 @keyframes spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }

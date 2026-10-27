@@ -42,10 +42,10 @@ import {
 
 import type { Facility } from "../utils/dataverse";
 import type { Cr9be_coachs } from "../generated/models/Cr9be_coachsModel";
+import type { Contacts } from "../generated/models/ContactsModel";
 import { prefetchPlayerPhotos } from "../utils/photoCache";
 import { PERFORMANCE_SKILL_FIELDS, PARENT_FEEDBACK_FIELD } from "../utils/performanceSkills";
-import type { Contacts } from "../generated/models/ContactsModel";
-
+import { normalizeGuid } from "../utils/guid";
 
 export type DataResource =
   | "players"
@@ -59,7 +59,6 @@ export type DataResource =
   | "generationsToCoaches"
   | "tasks";
 
-
 export type DataResourceStatus =
   | "idle"
   | "loading"
@@ -68,59 +67,40 @@ export type DataResourceStatus =
   | "stale"
   | "error";
 
-
 interface EnsureFreshOptions {
   force?: boolean;
   maxAgeMs?: number;
 }
-
 
 export interface GuardianContactDetails {
   name: string | null;
   phone: string | null;
 }
 
-
 export interface GuardianContactCacheSnapshot {
   details: GuardianContactDetails;
   isFresh: boolean;
 }
 
-
 interface GuardianContactOptions {
   force?: boolean;
 }
 
-
 interface DataContextValue {
   coachName: string | null;
   coachId: string | null;
-  /** True once environment + signed-in account are known, allowing scoped
-   *  guardian cache validation/writes. The regular guardian cache is readable
-   *  immediately, without waiting for Contact → Coach resolution. */
   guardianCacheReady: boolean;
 
-  /** True until a usable Coach identity is available. A saved identity can
-   *  make this false immediately while live Contact → Coach validation keeps
-   *  running in the background. */
   coachLookupLoading: boolean;
 
-  /** Specific reason the Contact → Coach lookup didn't resolve a coachId
-   *  (e.g. no Dataverse contact for the signed-in email, or no Coach record
-   *  linked to that contact) — null once resolved or while still pending. */
   coachLookupError: string | null;
 
-  /** True once the signed-in user's Dataverse security roles have been
-   *  checked for "Back office" membership. False (most restrictive) until
-   *  resolved or if the lookup fails. */
   isBackOffice: boolean;
   rolesLoaded: boolean;
 
   players: Cr9be_players[];
   events: Axm365_events[];
   attendances: Axm365_eventattendances[];
-  /** Clock-in rows for the resolved Coach. Absence is derived by comparing
-   *  these records with that Coach's past Events. */
   coachAttendances: Axm365_eventcoachattendances[];
   invoices: Invoices[];
   facilities: Facility[];
@@ -129,9 +109,6 @@ interface DataContextValue {
   allGenerations: Axm365_generations[];
   generationsToCoaches: Axm365_generationstocoacheses[];
 
-  /** Open (statecode = Open) Task activities regarding the signed-in coach's
-   *  own Coach record, newest first — mirrors the model-driven Timeline's
-   *  sort order. Empty until coachId resolves. */
   tasks: Tasks[];
   tasksLoading: boolean;
   tasksError: string | null;
@@ -156,43 +133,28 @@ interface DataContextValue {
   refreshGenerationsToCoaches: () => Promise<void>;
   refreshCoach: () => Promise<void>;
   refreshTasks: () => Promise<void>;
-  /** Reflect a confirmed clock-in in memory and the scoped cache before its
-   *  background Dataverse revalidation finishes. */
   recordCoachClockIn: (
     eventId: string,
     attendanceId: string,
     clockIn: string
   ) => void;
-  /** Merge confirmed player attendance writes into memory and the cache
-   *  without re-downloading the whole attendance table. */
   recordPlayerAttendances: (confirmed: Axm365_eventattendances[]) => void;
   ensureFresh: (
     resources: DataResource[],
     options?: EnsureFreshOptions
   ) => Promise<void>;
-  /** Marks a task Completed in Dataverse and drops it from `tasks` — active
-   *  tasks only are ever shown, so a completed one simply disappears. */
   completeTask: (taskId: string) => Promise<void>;
-  /** Queue a read made directly by a screen so it cannot overlap Context
-   *  requests in the Power Apps mobile Dataverse bridge. */
   runDataverseRead: <T>(
     label: string,
     operation: () => Promise<T>
   ) => Promise<T>;
-  /** Returns a saved guardian immediately when available, together with its
-   *  freshness. Cache identity is scoped to environment + account + Contact. */
   getCachedGuardianContact: (
     contactId: string
   ) => GuardianContactCacheSnapshot | null;
-  /** Returns a guardian Contact through the shared Dataverse queue. Fresh
-   *  cached values avoid a read; force=true revalidates a saved value. The
-   *  Contact read itself does not wait for account/cache scope to be ready. */
   getGuardianContact: (
     contactId: string,
     options?: GuardianContactOptions
   ) => Promise<GuardianContactDetails>;
-  /** Queue a user-initiated mutation. Writes are deliberately not retried:
-   *  a timed-out create may already have reached Dataverse. */
   runDataverseWrite: <T>(
     label: string,
     operation: () => Promise<T>
@@ -200,9 +162,7 @@ interface DataContextValue {
   refreshAll: () => Promise<void>;
 }
 
-
 const DataContext = createContext<DataContextValue | null>(null);
-
 
 const CACHE = {
   players: "cvf_players",
@@ -216,7 +176,6 @@ const CACHE = {
   generationsToCoaches: "cvf_generations_to_coaches",
 };
 
-
 const LEGACY_TASK_CACHE_KEY = "cvf_tasks";
 const TASK_CACHE_PREFIX = "cvf_tasks_v2";
 const TASK_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -226,24 +185,20 @@ const COACH_IDENTITY_CACHE_PREFIX = "cvf_coach_identity_v1";
 const COACH_IDENTITY_CACHE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const COACH_BOOTSTRAP_CACHE_KEY = "cvf_last_verified_coach_v1";
 
-
 interface TaskCacheEnvelope {
   cachedAt: number;
   tasks: Tasks[];
 }
-
 
 interface CoachAttendanceCacheEnvelope {
   cachedAt: number;
   attendances: Axm365_eventcoachattendances[];
 }
 
-
 interface CoachIdentityCacheEnvelope {
   cachedAt: number;
   coachId: string;
 }
-
 
 interface CoachBootstrapCacheEnvelope {
   cachedAt: number;
@@ -253,12 +208,7 @@ interface CoachBootstrapCacheEnvelope {
   coachName: string | null;
 }
 
-
-// Which Dataverse environment the cached rows above were fetched from.
-// Deliberately NOT part of CACHE — it is a marker, not cached table data,
-// and must survive the purge loop that clears the tables.
 const CACHE_ENV_KEY = "cvf_cached_org_url";
-
 
 const RESOURCE_MAX_AGE_MS: Record<DataResource, number> = {
   players: 5 * 60_000,
@@ -273,13 +223,11 @@ const RESOURCE_MAX_AGE_MS: Record<DataResource, number> = {
   tasks: 30_000,
 };
 
-
 function clearTableCaches() {
   try {
     Object.values(CACHE).forEach((key) => localStorage.removeItem(key));
   } catch {}
 }
-
 
 function readCache<T>(key: string): T[] {
   try {
@@ -291,20 +239,14 @@ function readCache<T>(key: string): T[] {
   }
 }
 
-
 function writeCache<T>(key: string, data: T[]) {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (cacheError) {
-    // Usually the Android WebView quota. The next launch then starts this
-    // resource without data and blocks its screen until a full reload.
     console.warn(`[CoachPortal] Could not persist the ${key} cache:`, cacheError);
   }
 }
 
-
-/** Player attendance columns used by the app. Selecting only these keeps the
- *  mobile download and the persisted cache small as the table grows. */
 export const PLAYER_ATTENDANCE_FIELDS = [
   "axm365_eventattendanceid",
   "axm365_name",
@@ -312,7 +254,6 @@ export const PLAYER_ATTENDANCE_FIELDS = [
   "_axm365_event_value",
   "_axm365_player_value",
 ];
-
 
 function compactPlayerAttendance(
   attendance: Axm365_eventattendances
@@ -326,9 +267,6 @@ function compactPlayerAttendance(
   } as Axm365_eventattendances;
 }
 
-
-/** Player performance columns used by Attendance, Performance and Players.
- *  The creator is read so parent feedback can be attributed to its coach. */
 const PLAYER_PERFORMANCE_FIELDS = [
   "axm365_playereventperformanceid",
   "axm365_performancename",
@@ -344,7 +282,6 @@ const PLAYER_PERFORMANCE_FIELDS = [
 
 const CREATED_BY_NAME_ANNOTATION =
   "_createdby_value@OData.Community.Display.V1.FormattedValue";
-
 
 function compactPlayerPerformance(
   performance: Axm365_playereventperformances
@@ -368,9 +305,6 @@ function compactPlayerPerformance(
   } as unknown as Axm365_playereventperformances;
 }
 
-
-// Invoice fields read by Home, Invoices and getInvoiceStatus. Their OData
-// formatted-value annotations (e.g. the customer display name) are kept too.
 const INVOICE_CACHE_FIELDS = new Set([
   "invoiceid",
   "invoicenumber",
@@ -388,7 +322,6 @@ const INVOICE_CACHE_FIELDS = new Set([
   "_customerid_value",
 ]);
 
-
 function compactInvoice(invoice: Invoices): Invoices {
   const compact: Record<string, unknown> = {};
   Object.entries(invoice as unknown as Record<string, unknown>).forEach(
@@ -399,7 +332,6 @@ function compactInvoice(invoice: Invoices): Invoices {
   return compact as unknown as Invoices;
 }
 
-
 function sortPlayersByName(items: Cr9be_players[]): Cr9be_players[] {
   return [...items].sort((left, right) => {
     const nameComparison = (left.cr9be_name ?? "").localeCompare(
@@ -408,20 +340,17 @@ function sortPlayersByName(items: Cr9be_players[]): Cr9be_players[] {
       { sensitivity: "base" }
     );
 
-    // Keep ordering deterministic when two Players have the same name.
     return nameComparison !== 0
       ? nameComparison
       : left.cr9be_playerid.localeCompare(right.cr9be_playerid);
   });
 }
 
-
 function taskCacheKey(orgUrl: string, coachId: string): string {
   return `${TASK_CACHE_PREFIX}:${encodeURIComponent(
     orgUrl.trim().toLowerCase()
   )}:${normalizeGuid(coachId)}`;
 }
-
 
 function readTaskCache(orgUrl: string | null, coachId: string): TaskCacheEnvelope | null {
   if (!orgUrl || !coachId) return null;
@@ -447,7 +376,6 @@ function readTaskCache(orgUrl: string | null, coachId: string): TaskCacheEnvelop
   }
 }
 
-
 function writeTaskCache(
   orgUrl: string | null,
   coachId: string | null,
@@ -458,8 +386,6 @@ function writeTaskCache(
   try {
     const value: TaskCacheEnvelope = {
       cachedAt: Date.now(),
-      // Persist only the fields used by Home and Notifications. Generated
-      // Dataverse rows contain many properties that waste mobile cache space.
       tasks: tasks.map((task) =>
         ({
           activityid: task.activityid,
@@ -480,13 +406,11 @@ function writeTaskCache(
   }
 }
 
-
 function coachAttendanceCacheKey(orgUrl: string, coachId: string): string {
   return `${COACH_ATTENDANCE_CACHE_PREFIX}:${encodeURIComponent(
     orgUrl.trim().toLowerCase()
   )}:${normalizeGuid(coachId)}`;
 }
-
 
 function readCoachAttendanceCache(
   orgUrl: string | null,
@@ -515,7 +439,6 @@ function readCoachAttendanceCache(
   }
 }
 
-
 function writeCoachAttendanceCache(
   orgUrl: string | null,
   coachId: string | null,
@@ -526,8 +449,6 @@ function writeCoachAttendanceCache(
   try {
     const value: CoachAttendanceCacheEnvelope = {
       cachedAt: Date.now(),
-      // Attendance rendering and clock-in checks need only these identifiers
-      // and timestamps. Compact rows avoid exhausting Android localStorage.
       attendances: attendances.map((attendance) =>
         ({
           axm365_eventcoachattendanceid:
@@ -553,13 +474,11 @@ function writeCoachAttendanceCache(
   }
 }
 
-
 function coachIdentityCacheKey(orgUrl: string, userKey: string): string {
   return `${COACH_IDENTITY_CACHE_PREFIX}:${encodeURIComponent(
     orgUrl.trim().toLowerCase()
   )}:${encodeURIComponent(userKey.trim().toLowerCase())}`;
 }
-
 
 function readCoachIdentityCache(
   orgUrl: string | null,
@@ -592,7 +511,6 @@ function readCoachIdentityCache(
   }
 }
 
-
 function writeCoachIdentityCache(
   orgUrl: string | null,
   userKey: string,
@@ -613,7 +531,6 @@ function writeCoachIdentityCache(
   } catch {}
 }
 
-
 function removeCoachIdentityCache(
   orgUrl: string | null,
   userKey: string
@@ -624,15 +541,10 @@ function removeCoachIdentityCache(
   } catch {}
 }
 
-
 function readCoachBootstrapCache(): CoachBootstrapCacheEnvelope | null {
   try {
     const raw = localStorage.getItem(COACH_BOOTSTRAP_CACHE_KEY);
     if (!raw) {
-      // One-time migration for installations that already have the former
-      // account-scoped Coach identity cache. If this device has exactly one
-      // valid identity, it is safe to use as the initial bootstrap hint and
-      // validate it against getContext immediately afterward.
       const prefix = `${COACH_IDENTITY_CACHE_PREFIX}:`;
       const candidates: CoachBootstrapCacheEnvelope[] = [];
 
@@ -705,7 +617,6 @@ function readCoachBootstrapCache(): CoachBootstrapCacheEnvelope | null {
   }
 }
 
-
 function writeCoachBootstrapCache(
   orgUrl: string | null,
   userKey: string,
@@ -730,13 +641,11 @@ function writeCoachBootstrapCache(
   return value;
 }
 
-
 function removeCoachBootstrapCache(): void {
   try {
     localStorage.removeItem(COACH_BOOTSTRAP_CACHE_KEY);
   } catch {}
 }
-
 
 function hasUsableCache(key: string): boolean {
   try {
@@ -746,7 +655,6 @@ function hasUsableCache(key: string): boolean {
     return false;
   }
 }
-
 
 function createInitialResourceStatus(
   hasCoachAttendanceCache = false
@@ -763,11 +671,9 @@ function createInitialResourceStatus(
     generationsToCoaches: hasUsableCache(CACHE.generationsToCoaches)
       ? "ready"
       : "idle",
-    // The Task cache cannot be selected safely until Coach identity resolves.
     tasks: "idle",
   };
 }
-
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string" && error.trim()) return error;
@@ -782,16 +688,6 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return typeof message === "string" && message.trim() ? message : fallback;
 }
 
-
-function normalizeGuid(value: string | null | undefined): string {
-  return (value ?? "").replace(/[{}]/g, "").trim().toLowerCase();
-}
-
-
-// Cache scoping must not depend only on dataverseOrgUrl. Power Apps Mobile can
-// supply the app/user context while that URL is unavailable or delayed. The
-// environment id is the stable first choice, with app id and org URL as safe
-// fallbacks for older hosts.
 function getContextCacheEnvironmentKey(context: unknown): string | null {
   const app = (context as any)?.app;
   const environmentId = normalizeGuid(app?.environmentId);
@@ -807,7 +703,6 @@ function getContextCacheEnvironmentKey(context: unknown): string | null {
   return orgUrl ? `org:${orgUrl}` : null;
 }
 
-
 function storedEnvironmentMatchesContext(
   storedEnvironment: string | null | undefined,
   context: unknown
@@ -818,9 +713,6 @@ function storedEnvironmentMatchesContext(
   const current = getContextCacheEnvironmentKey(context)?.toLowerCase();
   if (current && stored === current) return true;
 
-  // Accept the raw URL used by v4 and earlier once, then rewrite it using the
-  // stable environment/app scope. This avoids an unnecessary cache purge when
-  // upgrading on a host that still supplies dataverseOrgUrl.
   const legacyOrgUrl =
     typeof (context as any)?.app?.dataverseOrgUrl === "string"
       ? (context as any).app.dataverseOrgUrl.trim().toLowerCase()
@@ -831,11 +723,6 @@ function storedEnvironmentMatchesContext(
   );
 }
 
-
-// Guards a Dataverse call that could otherwise hang indefinitely (seen on
-// mobile, where a stalled network/auth handshake never rejects on its own)
-// so a coach is never stuck on "loading your coach profile" forever —
-// after `ms` it rejects with a clear, diagnosable message instead.
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
@@ -855,24 +742,32 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-
+const DATAVERSE_TIMEOUT_MS = 20_000;
 const MOBILE_RETRY_DELAYS_MS = [1000, 2500, 5000] as const;
+const TIMED_OUT_RETRY_DELAYS_MS = [2500] as const;
+const TRANSIENT_ERROR_FRAGMENTS = [
+  "cordova.exec is not a function",
+  "failed to acquire access token",
+  "network request failed",
+  "network error",
+  "failed to fetch",
+  "temporarily unavailable",
+  "timed out",
+];
+const TRANSIENT_HTTP_STATUSES = [408, 429, 502, 503, 504];
 const BACKGROUND_RETRY_DELAYS_MS = [15_000, 45_000, 120_000] as const;
 const GUARDIAN_CACHE_PREFIX = "cvf_guardian_v2";
 const GUARDIAN_CACHE_FRESH_MS = 24 * 60 * 60_000;
 const GUARDIAN_CACHE_RETENTION_MS = 30 * 24 * 60 * 60_000;
-
 
 interface GuardianContactCacheEnvelope {
   cachedAt: number;
   details: GuardianContactDetails;
 }
 
-
 interface GuardianTableCacheEntry extends GuardianContactCacheEnvelope {
   contactId: string;
 }
-
 
 function readGuardianTableCache(): Map<string, GuardianContactCacheEnvelope> {
   const entries = readCache<GuardianTableCacheEntry>(CACHE.guardians);
@@ -893,9 +788,6 @@ function readGuardianTableCache(): Map<string, GuardianContactCacheEnvelope> {
   });
 
   if (result.size === 0) {
-    // Migrate guardian details already cached by the previous scoped format.
-    // This prevents the package upgrade itself from causing one more mobile
-    // "Loading phone" cycle before the new regular table cache is populated.
     try {
       const prefix = `${GUARDIAN_CACHE_PREFIX}:`;
       for (let index = 0; index < localStorage.length; index += 1) {
@@ -936,7 +828,6 @@ function readGuardianTableCache(): Map<string, GuardianContactCacheEnvelope> {
   return result;
 }
 
-
 function writeGuardianTableCache(
   cache: Map<string, GuardianContactCacheEnvelope>
 ): void {
@@ -951,7 +842,6 @@ function writeGuardianTableCache(
   writeCache(CACHE.guardians, entries);
 }
 
-
 function guardianContactCacheKey(
   orgUrl: string,
   userKey: string,
@@ -961,7 +851,6 @@ function guardianContactCacheKey(
     orgUrl.trim().toLowerCase()
   )}:${encodeURIComponent(userKey.trim().toLowerCase())}:${normalizeGuid(contactId)}`;
 }
-
 
 function isGuardianCacheEnvelope(
   value: unknown
@@ -976,7 +865,6 @@ function isGuardianCacheEnvelope(
   );
 }
 
-
 function getErrorStatus(error: unknown): number | null {
   const candidate = error as any;
   const status =
@@ -988,27 +876,15 @@ function getErrorStatus(error: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-
 function isTransientOperationError(error: unknown): boolean {
   const message = getErrorMessage(error, "").toLowerCase();
   const status = getErrorStatus(error);
 
   return (
-    message.includes("cordova.exec is not a function") ||
-    message.includes("failed to acquire access token") ||
-    message.includes("network request failed") ||
-    message.includes("network error") ||
-    message.includes("failed to fetch") ||
-    message.includes("temporarily unavailable") ||
-    message.includes("timed out") ||
-    status === 408 ||
-    status === 429 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
+    TRANSIENT_ERROR_FRAGMENTS.some((fragment) => message.includes(fragment)) ||
+    (status !== null && TRANSIENT_HTTP_STATUSES.includes(status))
   );
 }
-
 
 async function runWithTransientRetries<T>(
   label: string,
@@ -1018,18 +894,15 @@ async function runWithTransientRetries<T>(
 
   while (true) {
     try {
-      return await withTimeout(operation(), 20000, label);
+      return await withTimeout(operation(), DATAVERSE_TIMEOUT_MS, label);
     } catch (operationError) {
       if (!isTransientOperationError(operationError)) {
         throw operationError;
       }
 
       const message = getErrorMessage(operationError, "").toLowerCase();
-      // A timed-out SDK request cannot be cancelled. Retry it only once to
-      // avoid creating several hidden requests. Mobile token/bridge failures
-      // reject immediately and can safely use the full warm-up schedule.
-      const retryDelays = message.includes("timed out")
-        ? MOBILE_RETRY_DELAYS_MS.slice(1, 2)
+      const retryDelays: readonly number[] = message.includes("timed out")
+        ? TIMED_OUT_RETRY_DELAYS_MS
         : MOBILE_RETRY_DELAYS_MS;
 
       if (retryIndex >= retryDelays.length) {
@@ -1049,14 +922,9 @@ async function runWithTransientRetries<T>(
   }
 }
 
-
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-
-  // A verified last-session identity is a startup hint only. It lets the
-  // Coach-scoped attendance cache render during the first React pass; the
-  // current Power Apps account is still validated immediately in background.
   const initialCoachBootstrapRef = useRef<CoachBootstrapCacheEnvelope | null>(
     readCoachBootstrapCache()
   );
@@ -1091,7 +959,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isBackOffice, setIsBackOffice] = useState(false);
 
   const [rolesLoaded, setRolesLoaded] = useState(false);
-
 
   const [players, setPlayers] = useState<Cr9be_players[]>(() =>
     sortPlayersByName(readCache<Cr9be_players>(CACHE.players))
@@ -1134,19 +1001,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       readCache(CACHE.generationsToCoaches)
     );
 
-  // Task cache restoration waits until the current Coach is resolved because
-  // the cache key is scoped by both Dataverse organization and Coach id.
   const [tasks, setTasks] = useState<Tasks[]>([]);
 
   const [tasksLoading, setTasksLoading] = useState(true);
 
   const [tasksError, setTasksError] = useState<string | null>(null);
 
-
-  // A single app-wide loading boolean cannot tell whether the particular
-  // resources a screen needs have finished. Track each dataset independently
-  // so rapid navigation cannot turn an in-flight empty array into a false
-  // "no data" state.
   const [resourceStatus, setResourceStatus] = useState<
     Record<DataResource, DataResourceStatus>
   >(() =>
@@ -1188,7 +1048,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const [error, setError] =
     useState<string | null>(null);
 
-
   const isLoadingResources = useCallback(
     (resources: DataResource[]): boolean =>
       resources.some(
@@ -1199,13 +1058,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     [resourceStatus]
   );
 
-
   const hasResourceErrors = useCallback(
     (resources: DataResource[]): boolean =>
       resources.some((resource) => resourceStatus[resource] === "error"),
     [resourceStatus]
   );
-
 
   const getResourceError = useCallback(
     (resources: DataResource[]): string | null => {
@@ -1218,13 +1075,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     [resourceErrors]
   );
 
-
   const hasStaleResources = useCallback(
     (resources: DataResource[]): boolean =>
       resources.some((resource) => resourceStatus[resource] === "stale"),
     [resourceStatus]
   );
-
 
   const clearBackgroundRetry = useCallback((resource: DataResource) => {
     const timer = backgroundRetryTimersRef.current[resource];
@@ -1233,7 +1088,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       delete backgroundRetryTimersRef.current[resource];
     }
   }, []);
-
 
   const scheduleBackgroundRetry = useCallback(
     (resource: DataResource, retry: () => void) => {
@@ -1252,11 +1106,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     []
   );
 
-
-  // Android Power Apps can hang when generated Dataverse reads overlap.
-  // Every Context-owned Dataverse operation therefore passes through one
-  // queue. Resource-level in-flight tracking also prevents duplicate tab
-  // effects from placing the same read in the queue more than once.
   const dataverseQueueTailRef = useRef<Promise<void>>(Promise.resolve());
   const resourceInFlightRef = useRef<
     Partial<Record<DataResource, Promise<void>>>
@@ -1274,8 +1123,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const coachAttendanceInFlightByCoachRef = useRef<
     Record<string, Promise<void>>
   >({});
-  // A confirmed create is merged into any older in-flight read so mobile
-  // eventual consistency cannot briefly turn the new clock-in into Absent.
   const pendingCoachClockInsRef = useRef<
     Map<string, Axm365_eventcoachattendances>
   >(new Map());
@@ -1288,15 +1135,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   const guardianContactInFlightRef = useRef<
     Map<string, Promise<GuardianContactDetails>>
   >(new Map());
-  // Prevent Player refreshes from enqueueing the same background Contact
-  // batch more than once while an earlier warm-up is still in flight.
   const guardianWarmupPendingRef = useRef<Set<string>>(new Set());
 
-  // Tasks and Coach Attendance are isolated by Dataverse environment + Coach.
-  // During the first mobile render getContext may not have populated the live
-  // organization ref yet, so use the last verified bootstrap organization only
-  // when it belongs to the same Coach. This lets both scoped caches restore and
-  // persist before the live account validation finishes without crossing users.
   const getCoachScopedCacheOrgUrl = useCallback(
     (targetCoachId: string | null | undefined): string | null => {
       const liveOrgUrl = dataverseOrgUrlRef.current;
@@ -1311,7 +1151,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     []
   );
-
 
   const enqueueDataverse = useCallback(
     <T,>(
@@ -1337,20 +1176,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     []
   );
 
-
   const runDataverseRead = useCallback(
     <T,>(label: string, operation: () => Promise<T>): Promise<T> =>
       enqueueDataverse(label, operation, true),
     [enqueueDataverse]
   );
 
-
   const runDataverseWrite = useCallback(
     <T,>(label: string, operation: () => Promise<T>): Promise<T> =>
       enqueueDataverse(label, operation, false),
     [enqueueDataverse]
   );
-
 
   const getGuardianCacheKey = useCallback((contactId: string): string | null => {
     const orgUrl = dataverseOrgUrlRef.current;
@@ -1360,7 +1196,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!orgUrl || !userKey || !normalizedContactId) return null;
     return guardianContactCacheKey(orgUrl, userKey, normalizedContactId);
   }, []);
-
 
   const readGuardianContactCache = useCallback(
     (contactId: string): GuardianContactCacheSnapshot | null => {
@@ -1388,9 +1223,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         } catch {}
       }
 
-      // Guardian Contact details are Player-related reference data, not
-      // Coach-specific data. This regular table cache is therefore available
-      // during the first render, before account/Coach scope is resolved.
       if (!cached) {
         cached =
           guardianTableCacheRef.current.get(normalizedContactId) ?? null;
@@ -1419,7 +1251,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     [getGuardianCacheKey]
   );
 
-
   const writeGuardianContactCache = useCallback(
     (
       key: string | null,
@@ -1446,13 +1277,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     []
   );
 
-
   const getCachedGuardianContact = useCallback(
     (contactId: string): GuardianContactCacheSnapshot | null =>
       readGuardianContactCache(contactId),
     [readGuardianContactCache]
   );
-
 
   const getGuardianContact = useCallback(
     (
@@ -1466,19 +1295,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const cacheKey = getGuardianCacheKey(normalizedId);
       const cached = readGuardianContactCache(normalizedId);
-      // A fresh cached null phone is also a complete Contact result: it means
-      // neither supported phone field currently has a value. Re-reading it on
-      // every Player selection defeats the cache and causes a loading flicker.
       if (!options.force && cached?.isFresh) {
         return Promise.resolve(cached.details);
       }
 
-      // Account context is needed only to scope persistent storage. It must
-      // never gate the live Contact read: Power Apps Mobile can resolve the
-      // Player before getContext has supplied organization/account identity.
-      // Deduplicate by Contact for this provider session. This also prevents
-      // guardianCacheReady changing mid-request from enqueueing a second read
-      // for the same selected guardian under a newly available cache key.
       const requestKey = `contact:${normalizedId}`;
       const existing = guardianContactInFlightRef.current.get(requestKey);
       if (existing) return existing;
@@ -1506,9 +1326,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             null;
           const details: GuardianContactDetails = { name, phone };
 
-          // Prefer the scope captured when the request began. If this was an
-          // early unscoped mobile read, getContext may have become ready while
-          // it was in flight; in that case it is now safe to persist the result.
           const resolvedCacheKey = cacheKey ?? getGuardianCacheKey(normalizedId);
           writeGuardianContactCache(resolvedCacheKey, normalizedId, details);
           return details;
@@ -1523,11 +1340,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     [getGuardianCacheKey, readGuardianContactCache, runDataverseRead, writeGuardianContactCache]
   );
 
-
-  // Warm Guardian Contact details as soon as cached Players are available.
-  // The regular guardian table cache is intentionally independent of Coach
-  // resolution, so mobile startup never waits for account/Coach scope before
-  // filling it. The optional scoped copy is added whenever context is ready.
   useEffect(() => {
     if (players.length === 0) return;
 
@@ -1577,9 +1389,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
               contact.telephone1?.trim() ||
               null;
 
-            // getGuardianCacheKey can legitimately be null during startup.
-            // writeGuardianContactCache still persists the regular table cache,
-            // which is the cache Performance can read before Coach resolution.
             writeGuardianContactCache(
               getGuardianCacheKey(contactId),
               contactId,
@@ -1590,8 +1399,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             );
           });
         } catch (guardianWarmupError) {
-          // Warm-up is best effort. The selected Player path keeps its own
-          // retry UX and must not be turned into a screen-level failure.
           console.warn(
             "[CoachPortal] Guardian cache warm-up failed:",
             guardianWarmupError
@@ -1611,7 +1418,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     runDataverseRead,
     writeGuardianContactCache,
   ]);
-
 
   const runResourceRefresh = useCallback(
     (
@@ -1647,8 +1453,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         })
         .catch((refreshError) => {
           if (hadUsableData) {
-            // Cached data remains usable. Keep the large blocking error hidden
-            // and arrange a bounded delayed retry through the same queue.
             scheduleBackgroundRetry(resource, () => {
               const retryRefresh = runResourceRefreshRef.current;
               if (retryRefresh) {
@@ -1682,11 +1486,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   runResourceRefreshRef.current = runResourceRefresh;
 
-
-  // ---------------------------------------------------------
-  // REFRESH PLAYERS
-  // ---------------------------------------------------------
-
   const refreshPlayers = useCallback(() =>
     runResourceRefresh("players", "Loading players", async () => {
       const data = sortPlayersByName(
@@ -1700,14 +1499,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           )
         ).map(({ cr9be_picture, ...player }) => player as Cr9be_players)
       );
-      // cr9be_picture can hold each Player's base64 thumbnail. Photos are
-      // cached separately by photoCache, and keeping them here can fill the
-      // mobile localStorage quota before later tables (e.g. invoices) persist.
 
       setPlayers(data);
       writeCache(CACHE.players, data);
 
-      // Warm player photo cache in background.
       prefetchPlayerPhotos(
         data.map((p) => ({
           playerId: p.cr9be_playerid,
@@ -1718,27 +1513,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }),
   [runResourceRefresh]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH EVENTS
-  // ---------------------------------------------------------
-
   const refreshEvents = useCallback(() =>
     runResourceRefresh("events", "Loading events", async () => {
-
-    // IMPORTANT:
-    // This used to be a bare `top: 100` with no paging and no ordering,
-    // which made it the only table here that silently truncated. Two
-    // consequences: with more than 100 events the app never saw the rest,
-    // and because Dataverse applies no guaranteed order without `orderby`,
-    // WHICH 100 came back could shift between refreshes — so the cached
-    // event list drifted out of step with the table instead of mirroring
-    // it. Paged in full (like players) so the fetched set is the whole
-    // table and a wholesale `setEvents` genuinely reflects deletions.
-    // orderBy matters for more than presentation: paging relies on a stable
-    // sort, and without one Dataverse can return a row twice across pages or
-    // skip it entirely. Ordering by start time also means every consumer gets
-    // events chronologically by default.
       const data = await fetchAllPages<Axm365_events>((skipToken) =>
         Axm365_eventsService.getAll({
           orderBy: ["axm365_eventdate"],
@@ -1751,14 +1527,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }),
   [runResourceRefresh]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH ATTENDANCES
-  // ---------------------------------------------------------
-
   const refreshAttendances = useCallback(() =>
     runResourceRefresh("attendances", "Loading attendances", async () => {
-      // Paged like Players/Events: a single getAll stops at one server page.
       const data = (
         await fetchAllPages<Axm365_eventattendances>((skipToken) =>
           Axm365_eventattendancesService.getAll({
@@ -1774,10 +1544,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }),
   [runResourceRefresh]);
 
-
-  // Reflect confirmed attendance writes in memory and the cache without
-  // re-downloading the whole table. Rows are replaced in place by id so the
-  // screen keeps finding the same record on the next save.
   const recordPlayerAttendances = useCallback(
     (confirmed: Axm365_eventattendances[]) => {
       if (confirmed.length === 0) return;
@@ -1808,16 +1574,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     },
     []
   );
-
-
-  // ---------------------------------------------------------
-  // REFRESH COACH ATTENDANCES
-  //
-  // This is intentionally separate from player event attendance. It is
-  // Coach-scoped and cached per environment + Coach. The last verified
-  // Coach's rows can be restored during the first render, then the current
-  // account and live rows are validated in the background.
-  // ---------------------------------------------------------
 
   const refreshCoachAttendances = useCallback(async () => {
     if (!coachId) return;
@@ -1937,7 +1693,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   refreshCoachAttendancesRef.current = refreshCoachAttendances;
 
-
   const recordCoachClockIn = useCallback((
     eventId: string,
     attendanceId: string,
@@ -1999,27 +1754,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }));
   }, [coachId, coachName, getCoachScopedCacheOrgUrl]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH INVOICES
-  // ---------------------------------------------------------
-
   const refreshInvoices = useCallback(() =>
     runResourceRefresh("invoices", "Loading invoices", async () => {
       const res = await InvoicesService.getAll({});
       const data = unwrapOrThrow<Invoices>(res);
 
       setInvoices(data);
-      // Full invoice rows carry dozens of unused columns and can exceed the
-      // mobile storage quota, leaving the next launch without invoices.
       writeCache(CACHE.invoices, data.map(compactInvoice));
     }),
   [runResourceRefresh]);
-
-
-  // ---------------------------------------------------------
-  // REFRESH FACILITIES
-  // ---------------------------------------------------------
 
   const refreshFacilities = useCallback(() =>
     runResourceRefresh("facilities", "Loading facilities", async () => {
@@ -2030,14 +1773,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }),
   [runResourceRefresh]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH PERFORMANCES
-  // ---------------------------------------------------------
-
   const refreshPerformances = useCallback(() =>
     runResourceRefresh("performances", "Loading performances", async () => {
-      // Paged like Attendances: a single getAll stops at one server page.
       const data = (
         await fetchAllPages<Axm365_playereventperformances>((skipToken) =>
           Axm365_playereventperformancesService.getAll({
@@ -2053,11 +1790,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     }),
   [runResourceRefresh]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH GENERATIONS
-  // ---------------------------------------------------------
-
   const refreshGenerations = useCallback(() =>
     runResourceRefresh("generations", "Loading generations", async () => {
       const res = await Axm365_generationsService.getAll({
@@ -2069,11 +1801,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       writeCache(CACHE.generations, data);
     }),
   [runResourceRefresh]);
-
-
-  // ---------------------------------------------------------
-  // REFRESH GENERATIONS TO COACHES
-  // ---------------------------------------------------------
 
   const refreshGenerationsToCoaches = useCallback(() =>
     runResourceRefresh(
@@ -2090,17 +1817,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     ),
   [runResourceRefresh]);
-
-
-  // ---------------------------------------------------------
-  // REFRESH TASKS
-  //
-  // Coach-scoped (unlike the tables above), so it becomes a no-op until
-  // coachId resolves from the Contact → Coach lookup further down. Ordered
-  // by createdon (always populated, unlike
-  // sortdate which is only set once a task has a scheduled date) so the
-  // most recently created task is always the one at the top.
-  // ---------------------------------------------------------
 
   const refreshTasks = useCallback(async () => {
     if (!coachId) {
@@ -2146,8 +1862,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         });
         const data = unwrapOrThrow<Tasks>(res);
 
-        // A response from a previous signed-in coach must never replace the
-        // current coach's list if the account changed while this was queued.
         if (activeCoachIdRef.current !== requestCoachId) return;
 
         setTasks(data);
@@ -2208,9 +1922,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
   refreshTasksRef.current = refreshTasks;
 
-
   useEffect(() => {
-
     if (coachId) {
       const normalizedCoachId = normalizeGuid(coachId);
       activeCoachIdRef.current = normalizedCoachId;
@@ -2235,11 +1947,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         tasks: cached ? "ready" : "idle",
       }));
       void refreshTasks().catch(() => {});
-
     } else if (!coachLookupLoading) {
-
-      // Coach lookup finished without a coachId. Never leave tasks from an
-      // earlier session or coach visible.
       activeCoachIdRef.current = null;
       resourceHasUsableDataRef.current.tasks = true;
       setTasks([]);
@@ -2255,16 +1963,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         ...current,
         tasks: "ready",
       }));
-
     }
-
   }, [
     coachId,
     coachLookupLoading,
     getCoachScopedCacheOrgUrl,
     refreshTasks,
   ]);
-
 
   useEffect(() => {
     if (coachId) {
@@ -2321,9 +2026,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshCoachAttendances,
   ]);
 
-
-  // Marks Completed in Dataverse, then drops it locally — the list only
-  // ever shows active tasks, so there is nothing to reconcile afterward.
   const completeTask = useCallback(async (taskId: string) => {
     await runDataverseWrite("Completing task", async () => {
       const result = await TasksService.update(taskId, {
@@ -2356,15 +2058,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     });
     lastFetchedRef.current.tasks = Date.now();
   }, [coachId, getCoachScopedCacheOrgUrl, runDataverseWrite]);
-
-
-  // ---------------------------------------------------------
-  // REFRESH EVERYTHING
-  //
-  // Deliberately sequential. The Android Power Apps host can hang when
-  // generated Dataverse getAll calls overlap. A lock also makes repeated
-  // Home mounts, visibility events, and manual refreshes share one run.
-  // ---------------------------------------------------------
 
   const refreshAll = useCallback((): Promise<void> => {
     if (refreshAllInFlightRef.current) {
@@ -2425,7 +2118,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshTasks,
   ]);
 
-
   const ensureFresh = useCallback(async (
     resources: DataResource[],
     options: EnsureFreshOptions = {}
@@ -2475,7 +2167,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     } else if (successfulRefreshes > 0) {
       setError(null);
     }
-
   }, [
     refreshPlayers,
     refreshEvents,
@@ -2489,34 +2180,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     refreshTasks,
   ]);
 
-
-  // ---------------------------------------------------------
-  // ENVIRONMENT-CHANGE CACHE PURGE
-  //
-  // IMPORTANT:
-  // The cache keys above are plain, unscoped localStorage names, and every
-  // local run of this app shares one origin (localhost:3000). Point
-  // power.config.json at a different environment — Dev2 vs Villarreal —
-  // and the previous environment's rows are still sitting under the exact
-  // same keys, so they load straight back into state on mount.
-  //
-  // That is what makes records deleted in Dataverse appear to survive: the
-  // rows on screen were never fetched from the table being edited, so no
-  // amount of refreshing that table removes them.
-  //
-  // Stamp the cache with a stable environment/app identifier. Do not rely
-  // only on dataverseOrgUrl because it can be unavailable in Power Apps
-  // Mobile even when environmentId, appId, and user context are available.
-  // ---------------------------------------------------------
-
   useEffect(() => {
-
     let cancelled = false;
 
     getContext()
 
       .then((ctx) => {
-
         if (cancelled) return;
 
         const orgUrl = getContextCacheEnvironmentKey(ctx);
@@ -2537,11 +2206,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           previous = localStorage.getItem(CACHE_ENV_KEY);
         } catch {}
 
-        // An UNSTAMPED cache counts as stale too, not just a mismatched
-        // one. Caches written before this check existed carry no origin at
-        // all, so trusting them would leave exactly the stale rows this is
-        // meant to clear. On a genuine first run there is nothing cached,
-        // so this is a no-op rather than a wasted purge.
         const hasCachedRows = Object.values(CACHE).some((key) => {
           try {
             return (localStorage.getItem(key)?.length ?? 0) > 2;
@@ -2551,7 +2215,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         });
 
         if (!storedEnvironmentMatchesContext(previous, ctx) && hasCachedRows) {
-
           console.warn(
             "[CoachPortal] Cached data did not come from this environment — clearing it.",
             { cachedFrom: previous ?? "(unstamped)", now: orgUrl }
@@ -2621,9 +2284,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
 
         try {
           localStorage.setItem(CACHE_ENV_KEY, orgUrl);
-          // Remove the old unscoped Task cache. The new cache uses a separate
-          // organization + Coach key and is restored only after identity is
-          // resolved.
           localStorage.removeItem(LEGACY_TASK_CACHE_KEY);
         } catch {}
       })
@@ -2638,11 +2298,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => {
       cancelled = true;
     };
-
   }, [clearBackgroundRetry]);
 
-
-  // Cancel delayed retries when the provider unmounts.
   useEffect(() => () => {
     Object.values(backgroundRetryTimersRef.current).forEach((timer) => {
       if (timer !== undefined) window.clearTimeout(timer);
@@ -2650,9 +2307,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     backgroundRetryTimersRef.current = {};
   }, []);
 
-
-  // If connectivity returns, retry only resources that are currently showing
-  // cached stale data. First-load failures remain explicit and user-driven.
   useEffect(() => {
     const handleOnline = () => {
       const staleResources = (
@@ -2675,20 +2329,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => window.removeEventListener("online", handleOnline);
   }, [clearBackgroundRetry, ensureFresh]);
 
-
-  // ---------------------------------------------------------
-  // REFRESH ON APP RESUME
-  //
-  // Covers the app being backgrounded and brought back to the foreground
-  // (switching apps on mobile, switching browser tabs) without a full
-  // relaunch. Only resources already fetched during this session are checked;
-  // opening the app must not accidentally recreate a full startup refresh.
-  // ---------------------------------------------------------
-
   useEffect(() => {
-
     const handleVisibilityChange = () => {
-
       if (document.visibilityState === "hidden") {
         wasHiddenRef.current = true;
         return;
@@ -2714,7 +2356,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           void ensureFresh(loadedResources);
         }
       }
-
     };
 
     document.addEventListener(
@@ -2723,23 +2364,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     );
 
     return () => {
-
       document.removeEventListener(
         "visibilitychange",
         handleVisibilityChange
       );
-
     };
-
   }, [
     clearBackgroundRetry,
     ensureFresh,
   ]);
-
-
-  // ---------------------------------------------------------
-  // LOGGED-IN USER → CONTACT → COACH
-  // ---------------------------------------------------------
 
   const clearResolvedCoach = useCallback(() => {
     clearBackgroundRetry("tasks");
@@ -2774,7 +2407,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [clearBackgroundRetry]);
 
   const refreshCoach = useCallback(async () => {
-
     clearBackgroundRetry("tasks");
     clearBackgroundRetry("coachAttendances");
     backgroundRetryAttemptsRef.current.tasks = 0;
@@ -2785,11 +2417,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     setCoachLookupError(null);
     if (!hadUsableCoach) clearResolvedCoach();
 
-
     await runWithTransientRetries("Loading your account", () => getContext())
 
       .then(async (ctx) => {
-
         const orgUrl = getContextCacheEnvironmentKey(ctx);
         dataverseOrgUrlRef.current = orgUrl;
 
@@ -2804,10 +2434,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         guardianCacheUserKeyRef.current = userKey || null;
         setGuardianCacheReady(Boolean(orgUrl && userKey));
 
-        // The bootstrap cache is intentionally read before getContext so the
-        // first mobile render can use saved Coach attendance. As soon as the
-        // current account is known, validate that hint and remove it if this
-        // is a different environment or signed-in user.
         const startupBootstrap = initialCoachBootstrapRef.current;
         const bootstrapMatchesCurrentAccount = Boolean(
           startupBootstrap &&
@@ -2824,7 +2450,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setCoachLookupLoading(true);
         }
 
-
         console.log(
           "[CoachPortal] Logged-in user:",
           {
@@ -2834,18 +2459,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         );
 
-
-        // Store logged-in user's name
         if (fullName) {
-
           setCoachName(fullName);
-
         }
 
-
-        // Make sure we have an email
         if (!email) {
-
           console.error(
             "[CoachPortal] No email found for logged-in user."
           );
@@ -2862,17 +2480,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setCoachLookupLoading(false);
 
           return;
-
         }
-
 
         let restoredCoachId: string | null = null;
 
         try {
-
-          // Restore the last verified Coach for this exact Dataverse
-          // organization and signed-in account. This is only a startup hint:
-          // the live Contact → Coach lookup below still runs every launch.
           const cachedIdentity = readCoachIdentityCache(orgUrl, userKey);
           if (cachedIdentity) {
             restoredCoachId = cachedIdentity.coachId;
@@ -2889,12 +2501,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             setCoachLookupLoading(false);
           }
 
-
-          // -------------------------------------------------
-          // STEP 1:
-          // Logged-in user email → Contact
-          // -------------------------------------------------
-
           const contacts = await enqueueDataverse(
             "Looking up your Contact record",
             async () => {
@@ -2905,12 +2511,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             }
           );
 
-
           console.log(
             "[CoachPortal] Contacts found:",
             contacts
           );
-
 
           const contact =
             contacts.find(
@@ -2921,9 +2525,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
                 normalizedEmail
             );
 
-
           if (!contact) {
-
             console.error(
               "[CoachPortal] No Contact found for email:",
               email
@@ -2941,24 +2543,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             setCoachLookupLoading(false);
 
             return;
-
           }
 
-
           const contactId = normalizeGuid(contact.contactid);
-
 
           console.log(
             "[CoachPortal] Contact found:",
             contactId,
             contact.fullname
           );
-
-
-          // -------------------------------------------------
-          // STEP 2:
-          // Contact → Coach
-          // -------------------------------------------------
 
           const coaches = await enqueueDataverse(
             "Looking up your Coach record",
@@ -2972,16 +2565,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             }
           );
 
-
           const coach =
             coaches.find(
               (c) =>
                 normalizeGuid(c._cr9be_contact_value) === contactId
             );
 
-
           if (!coach) {
-
             console.error(
               "[CoachPortal] No Coach found for Contact:",
               contactId
@@ -3001,26 +2591,17 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             setCoachLookupLoading(false);
 
             return;
-
           }
-
 
           console.log(
             "[CoachPortal] Coach found:",
             coach
           );
 
-
           console.log(
             "[CoachPortal] Coach ID:",
             coach.cr9be_coachid
           );
-
-
-          // -------------------------------------------------
-          // STEP 3:
-          // Save Coach ID
-          // -------------------------------------------------
 
           const resolvedCoachId = normalizeGuid(coach.cr9be_coachid);
 
@@ -3047,17 +2628,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           setCoachLookupError(null);
 
           setCoachLookupLoading(false);
-
         } catch (err) {
-
           console.error(
             "[CoachPortal] Failed to resolve Contact → Coach:",
             err
           );
 
           if (restoredCoachId || activeCoachIdRef.current) {
-            // Keep usable saved identity and its Coach-scoped Task cache.
-            // A temporary validation failure must not blank the application.
             setCoachLookupError(null);
           } else {
             setCoachLookupError(
@@ -3068,14 +2645,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
 
           setCoachLookupLoading(false);
-
         }
-
       })
 
-
       .catch((err) => {
-
         console.error(
           "[CoachPortal] Failed to get logged-in user:",
           err
@@ -3092,19 +2665,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
         setCoachLookupLoading(false);
-
       });
-
   }, [clearBackgroundRetry, clearResolvedCoach, enqueueDataverse]);
-
 
   useEffect(() => {
     void refreshCoach();
   }, [refreshCoach]);
 
-
-  // Roles are lower priority than the user/Coach and screen data. Start this
-  // only after the initial read sequence has settled, and use the same queue.
   const initialHomeDataSettled = (
     ["players", "events", "invoices"] as DataResource[]
   ).every(
@@ -3113,7 +2680,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
       resourceStatus[resource] === "stale" ||
       resourceStatus[resource] === "error"
   );
-
 
   useEffect(() => {
     if (
@@ -3161,16 +2727,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     enqueueDataverse,
   ]);
 
-
-  // ---------------------------------------------------------
-  // PROVIDER
-  // ---------------------------------------------------------
-
   return (
 
     <DataContext.Provider
       value={{
-
         coachName,
 
         coachId,
@@ -3264,7 +2824,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
         runDataverseWrite,
 
         refreshAll,
-
       }}
     >
 
@@ -3273,24 +2832,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     </DataContext.Provider>
 
   );
-
 };
-
 
 export const useData =
   (): DataContextValue => {
-
     const ctx =
       useContext(DataContext);
 
     if (!ctx) {
-
       throw new Error(
         "useData must be used inside DataProvider"
       );
-
     }
 
     return ctx;
-
   };
