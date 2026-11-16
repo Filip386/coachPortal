@@ -109,7 +109,7 @@ export const PlayersScreen: React.FC<PlayersScreenProps> = ({ go, goBack }) => {
       <StatusBar />
       <ScreenHeader
         kicker="Squad"
-        title="My Players"
+        title="Players"
         onBack={() => (goBack ? goBack() : go("home"))}
         action={
           <button
