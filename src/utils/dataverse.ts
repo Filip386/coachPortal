@@ -21,6 +21,35 @@ async function getOrgUrl(): Promise<string> {
   return cachedOrgUrl;
 }
 
+export async function associateRows(
+  entityName: string,
+  recordId: string,
+  relationshipName: string,
+  relatedEntityName: string,
+  relatedIds: string[]
+): Promise<void> {
+  const orgUrl = (await getOrgUrl()).replace(/\/$/, "");
+  const normalizedRecordId = recordId.replace(/[{}]/g, "");
+
+  for (const id of relatedIds) {
+    const normalizedRelatedId = id.replace(/[{}]/g, "");
+    if (!normalizedRelatedId) continue;
+
+    const res = await MicrosoftDataverseService.AssociateEntities(
+      entityName,
+      normalizedRecordId,
+      relationshipName,
+      {
+        "@odata.id": `${orgUrl}/api/data/v9.1/${relatedEntityName}(${normalizedRelatedId})`,
+      }
+    );
+
+    if (!res.success) {
+      throw connectorError(res.error, "Failed to link the event to generations.");
+    }
+  }
+}
+
 export const operationErrorMessage = (error: unknown, fallbackMessage: string): string =>
   (error as any)?.message ?? JSON.stringify(error) ?? fallbackMessage;
 

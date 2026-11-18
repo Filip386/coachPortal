@@ -235,6 +235,9 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       }
     };
 
+    allGenerations.forEach((generation) =>
+      addGeneration(generation.axm365_generationid, generation.axm365_name)
+    );
     players.forEach((p) =>
       addGeneration(p._cr9be_generation_value, p.cr9be_generationname || lookupName(p, "cr9be_generation"))
     );
@@ -243,7 +246,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       .forEach((mapping) => addGeneration(mapping._axm365_generation_value, mapping.axm365_generationname));
 
     return sortGenerationsByYear(result);
-  }, [coachId, players, generationsToCoaches]);
+  }, [coachId, allGenerations, players, generationsToCoaches]);
 
   const primaryGenId = useMemo(() => {
     if (!coachId) {

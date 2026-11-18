@@ -1517,6 +1517,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
     runResourceRefresh("events", "Loading events", async () => {
       const data = await fetchAllPages<Axm365_events>((skipToken) =>
         Axm365_eventsService.getAll({
+          select: [
+            "axm365_eventid",
+            "axm365_name",
+            "axm365_eventdate",
+            "axm365_eventtype",
+            "axm365_description",
+            "_axm365_facility_value",
+            "axm365_facilityname",
+          ],
           orderBy: ["axm365_eventdate"],
           ...(skipToken ? { skipToken } : {}),
         })

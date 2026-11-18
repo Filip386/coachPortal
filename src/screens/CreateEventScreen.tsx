@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useState, useMemo, useEffect } from "react";
-import { MapPin, RefreshCw, Zap, Trophy, Activity, ChevronDown, type LucideIcon } from "lucide-react";
+import { MapPin, RefreshCw, Zap, Trophy, Activity, ChevronDown, Check, type LucideIcon } from "lucide-react";
 import { Axm365_eventsService } from "../generated/services/Axm365_eventsService";
 import { Axm365_eventsaxm365_eventtype } from "../generated/models/Axm365_eventsModel";
 import { COLORS } from "../constants/design";
@@ -8,7 +8,7 @@ import type { ScreenId } from "../types/navigation";
 import { StatusBar, ScreenHeader, ErrorBanner } from "../components/shared";
 import { Label, FakeInput, SuccessBanner } from "../components/ui";
 import { useData } from "../context/DataContext";
-import { lookupName, operationErrorMessage } from "../utils/dataverse";
+import { associateRows, lookupName, operationErrorMessage } from "../utils/dataverse";
 
 interface CreateEventScreenProps {
   go: (id: ScreenId) => void;
@@ -37,6 +37,7 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
   const {
     events,
     facilities: allFacilities,
+    allGenerations,
     refreshEvents,
     refreshFacilities,
     runDataverseWrite,
@@ -48,6 +49,8 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
   const [time, setTime] = useState(DEFAULT_START_TIME);
   const [facilityId, setFacilityId] = useState<string>("");
   const [facilityName, setFacilityName] = useState<string>("");
+  const [selectedGenerationIds, setSelectedGenerationIds] = useState<string[]>([]);
+  const [showGenerationDropdown, setShowGenerationDropdown] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -74,6 +77,18 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
     );
   }, [allFacilities, events]);
 
+  const generations = useMemo(
+    () =>
+      allGenerations
+        .filter((generation) => generation.statecode === 0)
+        .map((generation) => ({
+          id: generation.axm365_generationid,
+          name: generation.axm365_name,
+        }))
+        .sort((a, b) => b.name.localeCompare(a.name)),
+    [allGenerations]
+  );
+
   const handleRetryFacilities = async () => {
     setLoadingFacilities(true);
     setFacilitiesError(null);
@@ -94,6 +109,9 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
     try {
       setSaving(true);
       setError(null);
+      if (selectedGenerationIds.length === 0) {
+        throw new Error("Select at least one generation.");
+      }
       const localDateTime = new Date(`${date}T${time}:00`);
       const result = await runDataverseWrite(
         "Creating event",
@@ -101,10 +119,31 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
           axm365_name: finalTitle,
           axm365_eventdate: localDateTime.toISOString(),
           axm365_eventtype: typeCode as any,
-          ...(facilityId && { "axm365_Facility@odata.bind": `/equipments(${facilityId})` }),
         } as any)
       );
       if (!result.success) throw new Error(operationErrorMessage(result.error, "Failed to create event"));
+      const createdEventId = result.data?.axm365_eventid;
+      if (!createdEventId) throw new Error("Event was created but its ID could not be determined.");
+      if (facilityId) {
+        await runDataverseWrite("Saving event facility", async () => {
+          const facilityResult = await Axm365_eventsService.update(createdEventId, {
+            "axm365_Facility@odata.bind": `/equipments(${facilityId.replace(/[{}]/g, "")})`,
+          });
+          if (!facilityResult.success) {
+            throw new Error(operationErrorMessage(facilityResult.error, "Failed to save the event facility."));
+          }
+        });
+      }
+      await runDataverseWrite(
+        "Linking event generations",
+        () => associateRows(
+          "axm365_events",
+          createdEventId,
+          "axm365_Event_axm365_Generation_axm365_Generation",
+          "axm365_generations",
+          selectedGenerationIds
+        )
+      );
       await refreshEvents().catch(() => {});
       setSuccess(true);
       setTimeout(() => { go("calendar"); }, REDIRECT_AFTER_SUCCESS_MS);
@@ -267,6 +306,112 @@ export const CreateEventScreen: React.FC<CreateEventScreenProps> = ({ go, goBack
                         }}
                       >
                         {facility.name}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <Label>Generations</Label>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              onClick={() => setShowGenerationDropdown((shown) => !shown)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 16px",
+                background: "#fff",
+                border: `1px solid ${COLORS.line}`,
+                borderRadius: 14,
+                fontSize: 14,
+                color: selectedGenerationIds.length > 0 ? COLORS.navy : COLORS.mute,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                textAlign: "left",
+                fontWeight: 500,
+              }}
+            >
+              <span style={{ flex: 1 }}>
+                {selectedGenerationIds.length === 0
+                  ? "Select generations"
+                  : generations
+                      .filter((generation) => selectedGenerationIds.includes(generation.id))
+                      .map((generation) => generation.name)
+                      .join(", ")}
+              </span>
+              <ChevronDown
+                size={18}
+                color={COLORS.navy}
+                strokeWidth={2}
+                style={{
+                  transform: showGenerationDropdown ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s",
+                }}
+              />
+            </button>
+
+            {showGenerationDropdown && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  right: 0,
+                  marginTop: 8,
+                  background: "#fff",
+                  border: `1px solid ${COLORS.line}`,
+                  borderRadius: 14,
+                  zIndex: 11,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                  overflow: "hidden",
+                  maxHeight: 240,
+                  overflowY: "auto",
+                }}
+              >
+                {generations.length === 0 ? (
+                  <div style={{ padding: "12px 16px", color: COLORS.mute, fontSize: 13 }}>
+                    No generations found.
+                  </div>
+                ) : (
+                  generations.map((generation) => {
+                    const selected = selectedGenerationIds.includes(generation.id);
+                    return (
+                      <button
+                        type="button"
+                        key={generation.id}
+                        onClick={() =>
+                          setSelectedGenerationIds((current) =>
+                            current.includes(generation.id)
+                              ? current.filter((id) => id !== generation.id)
+                              : [...current, generation.id]
+                          )
+                        }
+                        style={{
+                          width: "100%",
+                          padding: "12px 16px",
+                          background: selected ? COLORS.yellowSoft : "transparent",
+                          border: "none",
+                          borderBottom: `1px solid ${COLORS.line}`,
+                          textAlign: "left",
+                          cursor: "pointer",
+                          fontSize: 14,
+                          color: COLORS.navy,
+                          fontWeight: selected ? 700 : 400,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                        }}
+                      >
+                        <span>{generation.name}</span>
+                        {selected && <Check size={16} strokeWidth={3} />}
                       </button>
                     );
                   })

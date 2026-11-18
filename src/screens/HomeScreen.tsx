@@ -9,6 +9,7 @@ import { getInvoiceStatus } from "../utils/invoiceStatus";
 import { buildCoachAttendanceHistory } from "../utils/coachAttendance";
 import { byEventDateAscending, isEventActive } from "../utils/eventStatus";
 import { hasUsableData, isNotLoadedYet } from "../utils/resourceStatus";
+import { lookupName } from "../utils/dataverse";
 
 interface HomeScreenProps {
   go: (id: ScreenId, playerId?: string, eventId?: string) => void;
@@ -268,7 +269,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
               </h3>
             </div>
           ) : (
-            todayEvents.map((ev) => (
+            todayEvents.map((ev) => {
+              const location = lookupName(ev, "axm365_facility") || ev.axm365_description || "TBD";
+              return (
               <div
                 key={ev.axm365_eventid}
                 onClick={() => go("attendance", undefined, ev.axm365_eventid)}
@@ -290,7 +293,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                       </span>
                       <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         <MapPin size={12} />
-                        {ev.axm365_description || "TBD"}
+                        {location}
                       </span>
                     </div>
                   </div>
@@ -308,7 +311,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                   </button>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
@@ -334,6 +338,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
             {upcoming.map((e, i) => {
               const startDate = e.axm365_eventdate ? new Date(e.axm365_eventdate) : null;
+              const location = lookupName(e, "axm365_facility") || e.axm365_description;
               return (
                 <div key={e.axm365_eventid || i} onClick={() => go("calendar")} style={{ background: "#fff", borderRadius: 16, padding: 14, border: `1px solid ${COLORS.line}`, display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
                   <div style={{ width: 48, background: COLORS.yellowSoft, color: COLORS.navy, borderRadius: 12, padding: "8px 0", textAlign: "center", fontFamily: displayStack }}>
@@ -344,8 +349,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ go }) => {
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, color: COLORS.navy, fontSize: 14 }}>{e.axm365_name || "Event"}</div>
-                    <div style={{ fontSize: 11.5, color: COLORS.mute, marginTop: 2 }}>
-                      {startDate ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
+                    <div style={{ fontSize: 11.5, color: COLORS.mute, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>{startDate ? startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}</span>
+                      {location && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                            <MapPin size={11} />
+                            {location}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <ChevronRight size={16} color={COLORS.mute} strokeWidth={2} />

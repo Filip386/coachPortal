@@ -46,6 +46,15 @@ export function buildCoachGenerationTabs(
   const fromPlayers = uniqueGenerationCollector();
   players.forEach((player) => fromPlayers.add(player._cr9be_generation_value, playerGenerationName(player)));
 
+  const allActiveGenerations = uniqueGenerationCollector();
+  allGenerations.forEach((generation) =>
+    allActiveGenerations.add(generation.axm365_generationid, generation.axm365_name)
+  );
+
+  if (allActiveGenerations.generations.length > 0) {
+    return sortGenerationsByYear(allActiveGenerations.generations);
+  }
+
   if (!coachId) return sortGenerationsByYear(fromPlayers.generations);
 
   const relatedToCoach = uniqueGenerationCollector();
@@ -72,8 +81,10 @@ export function playersInGenerationTabs(
   generationTabs: GenerationOption[]
 ): Cr9be_players[] {
   if (!coachId || generationTabs.length === 0) return players;
-  const playersInTabs = players.filter((player) =>
+  const coachPlayers = players.filter((player) => sameGuid(player._cr9be_coach_value, coachId));
+  const scopedPlayers = coachPlayers.length > 0 ? coachPlayers : players;
+  const playersInTabs = scopedPlayers.filter((player) =>
     generationTabs.some((generation) => sameGuid(player._cr9be_generation_value, generation.id))
   );
-  return playersInTabs.length > 0 ? playersInTabs : players;
+  return playersInTabs.length > 0 ? playersInTabs : scopedPlayers;
 }
