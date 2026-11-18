@@ -35,7 +35,7 @@ $ErrorActionPreference = "Stop"
 
 # ---- what this script is allowed to push to -------------------------------
 $DEV2_ENVIRONMENT_ID = "5739f44a-0323-ec6a-9e6c-9795cc60af4c"
-$DEV2_APP_ID         = "ccf1272c-e2af-4abc-aabd-40a7e611bc24"
+$DEV2_APP_ID         = "89997775-4dd0-4a36-b88f-89ea8aa49fa8"
 $DEV2_APP_NAME       = "Coach App"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
