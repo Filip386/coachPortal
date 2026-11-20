@@ -1524,7 +1524,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({
             "axm365_eventtype",
             "axm365_description",
             "_axm365_facility_value",
-            "axm365_facilityname",
           ],
           orderBy: ["axm365_eventdate"],
           ...(skipToken ? { skipToken } : {}),
